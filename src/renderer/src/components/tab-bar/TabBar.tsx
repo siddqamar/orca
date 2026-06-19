@@ -961,6 +961,7 @@ function TabBarInner({
   )
 
   const togglePinned = (item: TabItem): void => {
+    // pinTab/unpinTab mirror the change to the host for remote-server tabs.
     if (item.isPinned) {
       unpinTab(item.unifiedTabId)
       return
