@@ -17,7 +17,7 @@ function provider(
   overrides: Partial<ProviderRateLimits> = {}
 ): ProviderRateLimits {
   return {
-    provider: 'gemini',
+    provider: 'claude',
     session: null,
     weekly: null,
     updatedAt: 0,
@@ -33,15 +33,15 @@ describe('isProviderConfigured', () => {
   })
 
   it('hides an unconfigured (unavailable) provider', () => {
-    // The bug: Gemini OAuth off / OpenCode Go cookie unset returns a non-null
-    // `unavailable` object, which previously slipped past the `!== null` gate
-    // and rendered a "--" bar for a provider the user never configured.
+    // The bug: a non-null `unavailable` object previously slipped past the
+    // `!== null` gate and rendered a "--" bar for a provider the user never
+    // configured.
     expect(isProviderConfigured(provider('unavailable'))).toBe(false)
   })
 
   it('hides a first-load fetching provider until it has proven usage data', () => {
     // The initial fetch marks every provider as `fetching`; without prior data
-    // that state is not proof the user configured Gemini or OpenCode Go.
+    // that state is not proof the user configured the provider.
     expect(isProviderConfigured(provider('fetching'))).toBe(false)
   })
 
@@ -69,7 +69,6 @@ function usageSettings(overrides: Partial<UsageProviderSettings> = {}): UsagePro
     codexManagedAccounts: [],
     claudeManagedAccounts: [],
     opencodeSessionCookie: '',
-    geminiCliOAuthEnabled: false,
     ...overrides
   }
 }
@@ -113,7 +112,6 @@ describe('hasUsageProviderSettings', () => {
   })
 
   it('treats explicit non-managed provider settings as configured usage providers', () => {
-    expect(hasUsageProviderSettings(usageSettings({ geminiCliOAuthEnabled: true }))).toBe(true)
     expect(
       hasUsageProviderSettings(usageSettings({ opencodeSessionCookie: ' session=abc ' }))
     ).toBe(true)
@@ -205,7 +203,7 @@ describe('getVisibleUsageProvider', () => {
 
   it('hides providers with no live data or durable configuration', () => {
     expect(getVisibleUsageProvider('codex', null, usageSettings())).toBe(null)
-    expect(getVisibleUsageProvider('gemini', provider('fetching'), usageSettings())).toBe(null)
+    expect(getVisibleUsageProvider('opencode-go', provider('fetching'), usageSettings())).toBe(null)
   })
 })
 
@@ -216,7 +214,6 @@ describe('isUsageEmptyState', () => {
         {
           claude: null,
           codex: null,
-          gemini: null,
           opencodeGo: null,
           kimi: null
         },
@@ -231,7 +228,6 @@ describe('isUsageEmptyState', () => {
         {
           claude: provider('fetching', { provider: 'claude' }),
           codex: provider('fetching', { provider: 'codex' }),
-          gemini: provider('unavailable'),
           opencodeGo: provider('unavailable', { provider: 'opencode-go' }),
           kimi: provider('unavailable', { provider: 'kimi' })
         },
@@ -246,7 +242,6 @@ describe('isUsageEmptyState', () => {
         {
           claude: provider('unavailable', { provider: 'claude' }),
           codex: provider('unavailable', { provider: 'codex' }),
-          gemini: provider('unavailable'),
           opencodeGo: provider('unavailable', { provider: 'opencode-go' }),
           kimi: provider('unavailable', { provider: 'kimi' })
         },
@@ -272,7 +267,6 @@ describe('isUsageEmptyState', () => {
         {
           claude: null,
           codex: null,
-          gemini: null,
           opencodeGo: null,
           kimi: null
         },
@@ -287,7 +281,6 @@ describe('isUsageEmptyState', () => {
         {
           claude: provider('unavailable', { provider: 'claude' }),
           codex: provider('unavailable', { provider: 'codex' }),
-          gemini: provider('unavailable'),
           opencodeGo: provider('unavailable', { provider: 'opencode-go' }),
           kimi: provider('unavailable', { provider: 'kimi' })
         },

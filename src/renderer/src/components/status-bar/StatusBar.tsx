@@ -53,7 +53,7 @@ import {
   formatResetCreditExpiry,
   getProviderUsageStatusLabel
 } from './tooltip'
-import { ClaudeIcon, GeminiIcon, OpenAIIcon, OpenCodeGoIcon } from './icons'
+import { ClaudeIcon, OpenAIIcon, OpenCodeGoIcon } from './icons'
 import { AgentIcon } from '@/lib/agent-catalog'
 import { formatWindowLabel } from '@/lib/window-label-formatter'
 import { markLiveCodexSessionsForRestart } from '@/lib/codex-session-restart'
@@ -1648,9 +1648,7 @@ export function ProviderDetailsMenu({
               <span className="text-muted-foreground">
                 {provider.provider === 'claude'
                   ? 'C'
-                  : provider.provider === 'gemini'
-                    ? 'G'
-                    : provider.provider === 'opencode-go'
+                  : provider.provider === 'opencode-go'
                       ? 'O'
                       : provider.provider === 'kimi'
                         ? 'K'
@@ -1715,7 +1713,7 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
     settings?.floatingTerminalTriggerLocation ?? 'floating-button'
   // Why: usage bars exist to surface CLI rate limits — showing one for an
   // agent that isn't on the user's PATH is just noise (e.g. a fresh Ubuntu
-  // install showing "Gemini Usage" with no Gemini CLI installed). We gate
+  // install showing a usage chip for a CLI that is not installed). We gate
   // the per-CLI bars on detection so the surface stays self-pruning, and
   // re-show automatically once the agent appears on PATH.
   const detectedAgentIds = useAppStore((s) => s.detectedAgentIds)
@@ -1750,7 +1748,7 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
   }, [])
 
   // Why: trigger PATH-based agent detection on mount so the per-CLI usage
-  // bars (Claude/Codex/Gemini) can hide themselves when the user doesn't
+  // bars can hide themselves when the user doesn't
   // have those CLIs installed. The slice deduplicates concurrent callers,
   // so this is safe even if other surfaces also call it.
   useEffect(() => {
@@ -1796,7 +1794,7 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
     return null
   }
 
-  const { claude, codex, gemini, opencodeGo, kimi } = rateLimits
+  const { claude, codex, opencodeGo, kimi } = rateLimits
 
   // Why: a provider earns a bar from either a usable live snapshot or durable
   // setup in Settings. The durable path keeps account switchers visible while
@@ -1805,7 +1803,6 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
   // bars when the agent isn't installed on PATH.
   const visibleClaude = getVisibleUsageProvider('claude', claude, settings)
   const visibleCodex = getVisibleUsageProvider('codex', codex, settings)
-  const visibleGemini = getVisibleUsageProvider('gemini', gemini, settings)
   const visibleKimi = getVisibleUsageProvider('kimi', kimi, settings)
   const showClaude =
     visibleClaude !== null &&
@@ -1815,10 +1812,6 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
     visibleCodex !== null &&
     statusBarItems.includes('codex') &&
     isStatusBarItemAvailable('codex', detectedAgentIds)
-  const showGemini =
-    visibleGemini !== null &&
-    statusBarItems.includes('gemini') &&
-    isStatusBarItemAvailable('gemini', detectedAgentIds)
   const showKimi =
     visibleKimi !== null &&
     statusBarItems.includes('kimi') &&
@@ -1833,19 +1826,18 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
   const showFloatingTerminalToggle =
     floatingTerminalEnabled && floatingTerminalTriggerLocation === 'status-bar'
   const anyVisible =
-    showClaude || showCodex || showGemini || showOpencodeGo || showKimi || showResourceUsage
+    showClaude || showCodex || showOpencodeGo || showKimi || showResourceUsage
   // Why: a brand-new user with no provider configured would otherwise see an
   // empty left side of the status bar and wonder what's missing. Settings are
   // included because managed accounts are durable even when live usage
   // snapshots are still hydrating or unavailable after an update.
-  const isEmptyUsageState = isUsageEmptyState({ claude, codex, gemini, opencodeGo, kimi }, settings)
+  const isEmptyUsageState = isUsageEmptyState({ claude, codex, opencodeGo, kimi }, settings)
   // Why: the teaching CTA is a one-time nudge — once the user hides it, keep it
   // hidden even after providers are disconnected again.
   const showEmptyUsageCta = isEmptyUsageState && !usageEmptyStateDismissed
   const anyFetching =
     claude?.status === 'fetching' ||
     codex?.status === 'fetching' ||
-    gemini?.status === 'fetching' ||
     opencodeGo?.status === 'fetching' ||
     kimi?.status === 'fetching'
 
@@ -1888,17 +1880,6 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
             )}
             {showCodex && (
               <CodexSwitcherMenu codex={visibleCodex} compact={compact} iconOnly={iconOnly} />
-            )}
-            {showGemini && (
-              <ProviderDetailsMenu
-                provider={visibleGemini}
-                compact={compact}
-                iconOnly={iconOnly}
-                ariaLabel={translate(
-                  'auto.components.status.bar.StatusBar.d2375976eb',
-                  'Open Gemini usage details'
-                )}
-              />
             )}
             {showOpencodeGo && (
               <ProviderDetailsMenu
@@ -2016,18 +1997,6 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
             >
               <OpenAIIcon size={14} />
               {translate('auto.components.status.bar.StatusBar.c0909c686e', 'Codex Usage')}
-            </DropdownMenuCheckboxItem>
-          )}
-          {isStatusBarItemAvailable('gemini', detectedAgentIds) && (
-            <DropdownMenuCheckboxItem
-              checked={statusBarItems.includes('gemini')}
-              onCheckedChange={() => {
-                recordFeatureInteraction('usage-tracking')
-                toggleStatusBarItem('gemini')
-              }}
-            >
-              <GeminiIcon size={14} />
-              {translate('auto.components.status.bar.StatusBar.c1df0d67ec', 'Gemini Usage')}
             </DropdownMenuCheckboxItem>
           )}
           <DropdownMenuCheckboxItem
