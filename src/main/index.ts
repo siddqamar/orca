@@ -524,7 +524,7 @@ function startDesktopFirstWindowStartupServices(): Promise<void> {
       console.error('[daemon] Failed to start daemon PTY provider, falling back to local:', error)
     },
     onAgentHookServerError: (error) => {
-      // Why: Claude/Codex/Gemini/OpenCode/Cursor hook callbacks are sidebar
+      // Why: Claude/Codex/OpenCode/Cursor hook callbacks are sidebar
       // enrichment only. Orca must still boot if the loopback receiver fails.
       console.error('[agent-hooks] Failed to start local hook server:', error)
     }

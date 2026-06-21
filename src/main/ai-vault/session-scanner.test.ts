@@ -14,11 +14,10 @@ afterEach(async () => {
 })
 
 function isolatedScanRoots(root: string) {
-  return {
-    claudeProjectsDir: join(root, 'claude-projects'),
-    codexSessionsDir: join(root, 'codex-sessions'),
-    geminiSessionsDir: join(root, 'gemini-sessions'),
-    copilotSessionsDir: join(root, 'copilot-sessions'),
+    return {
+      claudeProjectsDir: join(root, 'claude-projects'),
+      codexSessionsDir: join(root, 'codex-sessions'),
+      copilotSessionsDir: join(root, 'copilot-sessions'),
     cursorProjectsDir: join(root, 'cursor-projects'),
     opencodeStorageDir: join(root, 'opencode-storage'),
     grokSessionsDir: join(root, 'grok-sessions'),
@@ -345,29 +344,6 @@ describe('scanAiVaultSessions', () => {
       ])
     )
 
-    await mkdir(roots.geminiSessionsDir, { recursive: true })
-    await writeFile(
-      join(roots.geminiSessionsDir, 'gemini-session.json'),
-      JSON.stringify({
-        sessionId: 'gemini-session',
-        startTime: '2026-05-01T10:02:00.000Z',
-        lastUpdated: '2026-05-01T10:02:01.000Z',
-        messages: [
-          {
-            type: 'user',
-            timestamp: '2026-05-01T10:02:00.000Z',
-            content: [{ text: 'Gemini title' }]
-          },
-          {
-            type: 'gemini',
-            timestamp: '2026-05-01T10:02:01.000Z',
-            model: 'gemini-2.5-pro',
-            tokens: { input: 10, output: 5 }
-          }
-        ]
-      })
-    )
-
     await mkdir(roots.copilotSessionsDir, { recursive: true })
     await writeFile(
       join(roots.copilotSessionsDir, 'copilot-session.jsonl'),
@@ -645,7 +621,6 @@ describe('scanAiVaultSessions', () => {
     expect(commandByAgent.get('codex')).toBe(
       `cd '/tmp/codex' && CODEX_HOME='${root}' codex resume 'codex-session'`
     )
-    expect(commandByAgent.get('gemini')).toBe("gemini --resume 'gemini-session'")
     expect(commandByAgent.get('copilot')).toBe(
       "cd '/tmp/copilot' && copilot --resume='copilot-session'"
     )

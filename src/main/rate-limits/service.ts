@@ -18,7 +18,6 @@ import {
   type ClaudeAccountSelectionTarget,
   type NormalizedClaudeAccountSelectionTarget
 } from '../claude-accounts/runtime-selection'
-import { fetchGeminiRateLimits } from './gemini-usage-fetcher'
 import { fetchKimiRateLimits } from './kimi-fetcher'
 import { fetchOpenCodeGoRateLimits } from './opencode-go-usage-fetcher'
 import {
@@ -53,7 +52,6 @@ const DEFERRED_STARTUP_ACTIVE_REFRESH_MS = 1000
 type InternalRateLimitState = {
   claude: ProviderRateLimits | null
   codex: ProviderRateLimits | null
-  gemini: ProviderRateLimits | null
   opencodeGo: ProviderRateLimits | null
   kimi: ProviderRateLimits | null
 }
@@ -69,7 +67,6 @@ export class RateLimitService {
   private state: InternalRateLimitState = {
     claude: null,
     codex: null,
-    gemini: null,
     opencodeGo: null,
     kimi: null
   }
@@ -102,7 +99,6 @@ export class RateLimitService {
     | (() => {
         opencodeSessionCookie: string
         opencodeWorkspaceId: string
-        geminiCliOAuthEnabled?: boolean
       })
     | null = null
   private inactiveClaudeAccountsResolver: (() => InactiveClaudeAccountInfo[]) | null = null
@@ -146,7 +142,6 @@ export class RateLimitService {
     resolver: () => {
       opencodeSessionCookie: string
       opencodeWorkspaceId: string
-      geminiCliOAuthEnabled?: boolean
     }
   ): void {
     this.settingsResolver = resolver
@@ -794,7 +789,7 @@ export class RateLimitService {
 
   private withFetchingStatus(
     current: ProviderRateLimits | null,
-    provider: 'claude' | 'codex' | 'gemini' | 'opencode-go' | 'kimi'
+    provider: 'claude' | 'codex' | 'opencode-go' | 'kimi'
   ): ProviderRateLimits {
     if (!current) {
       return {
@@ -822,7 +817,6 @@ export class RateLimitService {
     const settings = this.settingsResolver?.()
     const cookie = settings?.opencodeSessionCookie ?? ''
     const workspaceIdOverride = settings?.opencodeWorkspaceId ?? ''
-    const geminiCliOAuthEnabled = settings?.geminiCliOAuthEnabled ?? false
 
     // Detect if configuration changed — if it did, we must discard any stale
     // data because it belongs to a different session/workspace.
@@ -841,7 +835,6 @@ export class RateLimitService {
       ...previousState,
       claude: this.withFetchingStatus(previousState.claude, 'claude'),
       codex: this.withFetchingStatus(previousState.codex, 'codex'),
-      gemini: this.withFetchingStatus(previousState.gemini, 'gemini'),
       opencodeGo: opencodeConfigChanged
         ? this.withFetchingStatus(null, 'opencode-go')
         : this.withFetchingStatus(previousState.opencodeGo, 'opencode-go'),
@@ -851,7 +844,7 @@ export class RateLimitService {
     const missingWslCodexHome = codexHomePath
       ? null
       : this.getMissingWslCodexHomeResult(codexTarget)
-    const [claudeResult, codexResult, geminiResult, opencodeGoResult, kimiResult] =
+    const [claudeResult, codexResult, opencodeGoResult, kimiResult] =
       await Promise.allSettled([
         fetchClaudeRateLimits({
           authPreparation: claudeAuthPreparation,
@@ -864,7 +857,6 @@ export class RateLimitService {
             codexHomePath,
             allowPtyFallback: this.shouldAllowCodexPtyFallback()
           }),
-        fetchGeminiRateLimits(geminiCliOAuthEnabled),
         fetchOpenCodeGoRateLimits(cookie, workspaceIdOverride || undefined),
         fetchKimiRateLimits()
       ])
@@ -892,19 +884,6 @@ export class RateLimitService {
             updatedAt: Date.now(),
             error:
               codexResult.reason instanceof Error ? codexResult.reason.message : 'Unknown error',
-            status: 'error'
-          } satisfies ProviderRateLimits)
-
-    const gemini =
-      geminiResult.status === 'fulfilled'
-        ? geminiResult.value
-        : ({
-            provider: 'gemini',
-            session: null,
-            weekly: null,
-            updatedAt: Date.now(),
-            error:
-              geminiResult.reason instanceof Error ? geminiResult.reason.message : 'Unknown error',
             status: 'error'
           } satisfies ProviderRateLimits)
 
@@ -960,7 +939,6 @@ export class RateLimitService {
       codex: shouldApplyCodex
         ? this.applyStalePolicy(codex, previousState.codex)
         : this.state.codex,
-      gemini: this.applyStalePolicy(gemini, previousState.gemini),
       opencodeGo: shouldApplyOpencode
         ? opencodeConfigChanged
           ? opencodeGo

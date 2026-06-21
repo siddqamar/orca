@@ -10,7 +10,6 @@ import { parseKimiSessionFile } from './session-scanner-kimi-parser'
 import {
   parseClaudeSessionFile,
   parseCodexSessionFile,
-  parseGeminiSessionFile
 } from './session-scanner-primary-parsers'
 import {
   parseCopilotSessionFile,
@@ -29,8 +28,6 @@ export async function parseAgentSessionFile(
       return parseClaudeSessionFile(candidate.file, platform)
     case 'codex':
       return parseCodexSessionFile(candidate.file, platform, candidate.codexHome)
-    case 'gemini':
-      return parseGeminiSessionFile(candidate.file, platform)
     case 'copilot':
       return parseCopilotSessionFile(candidate.file, platform)
     case 'cursor':

@@ -29,7 +29,6 @@ const CLAUDE_PROJECTS_DIR = join(homedir(), '.claude', 'projects')
 const DEFAULT_CODEX_HOME_DIR = join(homedir(), '.codex')
 const CODEX_HOME_DIR = process.env.CODEX_HOME?.trim() || DEFAULT_CODEX_HOME_DIR
 const CODEX_SESSIONS_DIR = join(CODEX_HOME_DIR, 'sessions')
-const GEMINI_SESSIONS_DIR = join(homedir(), '.gemini', 'tmp')
 const COPILOT_SESSIONS_DIR = join(
   process.env.COPILOT_HOME?.trim() || join(homedir(), '.copilot'),
   'session-state'
@@ -85,13 +84,6 @@ export async function scanAiVaultSessions(
         extensions: ['.jsonl']
       })
     ),
-    discoverFiles({
-      rootDir: options.geminiSessionsDir ?? GEMINI_SESSIONS_DIR,
-      limit: limitPerAgent,
-      agent: 'gemini',
-      issues,
-      extensions: ['.json', '.jsonl']
-    }),
     discoverFiles({
       rootDir: options.copilotSessionsDir ?? COPILOT_SESSIONS_DIR,
       limit: limitPerAgent,

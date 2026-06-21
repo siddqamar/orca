@@ -77,7 +77,6 @@ export const AGENT_KIND_VALUES = [
   'opencode',
   'pi',
   'omp',
-  'gemini',
   'antigravity',
   'aider',
   'goose',
@@ -296,7 +295,6 @@ export const SETTINGS_CHANGED_WHITELIST = [
   'experimentalTerminalAttention',
   'experimentalAgentHibernation',
   'experimentalWorktreeSymlinks',
-  'geminiCliOAuthEnabled'
 ] as const satisfies readonly BooleanGlobalSettingsKey[]
 export const settingsChangedKeySchema = z.enum(SETTINGS_CHANGED_WHITELIST)
 export type SettingsChangedKey = z.infer<typeof settingsChangedKeySchema>

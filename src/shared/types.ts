@@ -2212,7 +2212,6 @@ export type TuiAgent =
   | 'opencode' // OpenCode
   | 'pi' // Pi (pi.dev)
   | 'omp' // OMP (omp.sh)
-  | 'gemini' // Gemini CLI
   | 'antigravity' // Google Antigravity CLI
   | 'aider' // Aider
   | 'goose' // Goose
@@ -2625,9 +2624,6 @@ export type GlobalSettings = {
   /** Optional workspace ID override for OpenCode Go. When set, skips the
    *  workspaces lookup and fetches usage directly for this workspace. */
   opencodeWorkspaceId: string
-  /** Whether to extract OAuth credentials from the local Gemini CLI installation
-   *  for rate-limit fetching. Disabled by default for explicit opt-in. */
-  geminiCliOAuthEnabled: boolean
   /** Per-agent CLI command overrides. A missing key means use the catalog default binary name. */
   agentCmdOverrides: Partial<Record<TuiAgent, string>>
   /** Per-agent default CLI arguments appended after the binary/path and before prompts. */
@@ -2963,7 +2959,6 @@ export type AgentActivityDisplayMode = 'compact' | 'full'
 export type StatusBarItem =
   | 'claude'
   | 'codex'
-  | 'gemini'
   | 'opencode-go'
   | 'kimi'
   | 'ssh'
