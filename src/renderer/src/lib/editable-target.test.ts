@@ -1,36 +1,119 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { isEditableTarget } from './editable-target'
 
-describe('isEditableTarget', () => {
-  it('returns true for native form fields', () => {
-    const input = document.createElement('input')
-    const textarea = document.createElement('textarea')
-    const select = document.createElement('select')
+class MockHTMLElement {
+  isContentEditable: boolean
+  className: string
+  classList: { contains: (token: string) => boolean }
+  private readonly closestMatches: string[]
 
-    expect(isEditableTarget(input)).toBe(true)
-    expect(isEditableTarget(textarea)).toBe(true)
-    expect(isEditableTarget(select)).toBe(true)
+  constructor(options: { className?: string; closestMatches?: string[]; isContentEditable?: boolean }) {
+    this.className = options.className ?? ''
+    this.closestMatches = options.closestMatches ?? []
+    this.isContentEditable = options.isContentEditable ?? false
+    this.classList = {
+      contains: (token: string) => this.className.split(' ').includes(token)
+    }
+  }
+
+  closest(selector: string): Record<string, never> | null {
+    const selectorMatchesClass = this.className
+      .split(' ')
+      .filter(Boolean)
+      .some((className) => selector.includes(`.${className}`))
+    return selectorMatchesClass || this.closestMatches.some((match) => selector.includes(match))
+      ? {}
+      : null
+  }
+}
+
+function makeTarget(options: {
+  className?: string
+  closestMatches?: string[]
+  isContentEditable?: boolean
+}): MockHTMLElement {
+  return new MockHTMLElement(options)
+}
+
+describe('isEditableTarget', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('returns true for native form fields', () => {
+    vi.stubGlobal('HTMLElement', MockHTMLElement)
+
+    expect(
+      isEditableTarget(
+        makeTarget({
+          closestMatches: ['input']
+        }) as unknown as EventTarget
+      )
+    ).toBe(true)
+    expect(
+      isEditableTarget(
+        makeTarget({
+          closestMatches: ['textarea']
+        }) as unknown as EventTarget
+      )
+    ).toBe(true)
+    expect(
+      isEditableTarget(
+        makeTarget({
+          closestMatches: ['select']
+        }) as unknown as EventTarget
+      )
+    ).toBe(true)
   })
 
   it('returns true for Monaco and rich markdown editor hosts', () => {
-    const monaco = document.createElement('div')
-    monaco.className = 'monaco-editor'
-    const diffEditor = document.createElement('div')
-    diffEditor.className = 'diff-editor'
-    const richMarkdownEditor = document.createElement('div')
-    richMarkdownEditor.className = 'rich-markdown-editor'
+    vi.stubGlobal('HTMLElement', MockHTMLElement)
 
-    expect(isEditableTarget(monaco)).toBe(true)
-    expect(isEditableTarget(diffEditor)).toBe(true)
-    expect(isEditableTarget(richMarkdownEditor)).toBe(true)
+    expect(
+      isEditableTarget(
+        makeTarget({
+          className: 'monaco-editor',
+          closestMatches: ['.monaco-editor']
+        }) as unknown as EventTarget
+      )
+    ).toBe(true)
+    expect(
+      isEditableTarget(
+        makeTarget({
+          className: 'diff-editor',
+          closestMatches: ['.diff-editor']
+        }) as unknown as EventTarget
+      )
+    ).toBe(true)
+    expect(
+      isEditableTarget(
+        makeTarget({
+          className: 'rich-markdown-editor',
+          closestMatches: ['.rich-markdown-editor']
+        }) as unknown as EventTarget
+      )
+    ).toBe(true)
+    expect(
+      isEditableTarget(
+        makeTarget({
+          className: 'rich-markdown-editor-shell',
+          closestMatches: ['.rich-markdown-editor-shell']
+        }) as unknown as EventTarget
+      )
+    ).toBe(true)
   })
 
   it('returns false for terminal helper textareas and non-editable surfaces', () => {
-    const terminalHelper = document.createElement('textarea')
-    terminalHelper.className = 'xterm-helper-textarea'
-    const div = document.createElement('div')
+    vi.stubGlobal('HTMLElement', MockHTMLElement)
 
-    expect(isEditableTarget(terminalHelper)).toBe(false)
-    expect(isEditableTarget(div)).toBe(false)
+    expect(
+      isEditableTarget(
+        makeTarget({
+          className: 'xterm-helper-textarea',
+          closestMatches: ['textarea']
+        }) as unknown as EventTarget
+      )
+    ).toBe(false)
+    expect(isEditableTarget(makeTarget({}) as unknown as EventTarget)).toBe(false)
   })
 })
