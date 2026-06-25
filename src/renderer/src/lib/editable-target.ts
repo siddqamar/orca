@@ -16,8 +16,13 @@ export function isEditableTarget(target: EventTarget | null): boolean {
   if (target.isContentEditable) {
     return true
   }
+
+  // Why: Monaco and other embedded editors live inside host containers that
+  // are not themselves form fields, so capture-phase global shortcuts must
+  // treat those editor roots as editable too.
   return (
-    target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]') !==
-    null
+    target.closest(
+      'input, textarea, select, [contenteditable=""], [contenteditable="true"], .monaco-editor, .diff-editor, .rich-markdown-editor, .rich-markdown-editor-shell'
+    ) !== null
   )
 }
