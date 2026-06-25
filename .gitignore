@@ -115,3 +115,11 @@ src/renderer/src/i18n/locales/.zh-catalog-cache.json
 src/renderer/src/i18n/locales/.ko-catalog-cache.json
 src/renderer/src/i18n/locales/.ja-catalog-cache.json
 src/renderer/src/i18n/locales/.es-catalog-cache.json
+
+# Local verification tests for specific issues (e.g. 6082) - not to be pushed
+*6082*
+src/main/ipc/*6082*.test.ts
+6082-*.ts
+6082-*.js
+verify-6082-*.js
+verify-6082-*.ts

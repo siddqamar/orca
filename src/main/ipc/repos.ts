@@ -181,6 +181,20 @@ async function addLocalRepoFromPath(
     return { error: `Not a valid git repository: ${path}` }
   }
 
+  // Why: ensure repo.path (used for main worktree id `${id}::${path}` and file explorer root)
+  // is the actual working tree (git rev-parse --show-toplevel), not a separate git dir
+  // from --separate-git-dir or a subdirectory. Matches the rootPath normalization done
+  // for remote/SSH adds.
+  if (repoKind === 'git') {
+    try {
+      const { stdout } = await gitExecFileAsync(['rev-parse', '--show-toplevel'], { cwd: path })
+      const root = stdout.trim()
+      if (root) path = root
+    } catch {
+      // isGitRepo already passed; keep caller-provided path
+    }
+  }
+
   const pathKey = normalizeRuntimePathForComparison(path)
   const existing = store
     .getRepos()
