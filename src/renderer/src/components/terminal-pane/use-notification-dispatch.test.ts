@@ -84,6 +84,11 @@ function stubDocumentFocus({
   })
 }
 
+function getLastNotificationDispatchArg(): Record<string, unknown> | undefined {
+  const dispatch = window.api.notifications.dispatch as unknown as ReturnType<typeof vi.fn>
+  return dispatch.mock.calls.at(-1)?.[0] as Record<string, unknown> | undefined
+}
+
 describe('dispatchTerminalNotification', () => {
   const liveLeafId = '11111111-1111-4111-8111-111111111111'
   const staleLeafId = '22222222-2222-4222-8222-222222222222'
@@ -458,7 +463,7 @@ describe('dispatchTerminalNotification', () => {
       paneKey
     })
 
-    const dispatchArgs = window.api.notifications.dispatch.mock.calls.at(-1)?.[0]
+    const dispatchArgs = getLastNotificationDispatchArg()
     expect(dispatchArgs).toEqual(
       expect.objectContaining({
         source: 'agent-task-complete',
@@ -484,7 +489,7 @@ describe('dispatchTerminalNotification', () => {
       paneKey
     })
 
-    const dispatchArgs = window.api.notifications.dispatch.mock.calls.at(-1)?.[0]
+    const dispatchArgs = getLastNotificationDispatchArg()
     expect(dispatchArgs).toEqual(
       expect.objectContaining({
         source: 'agent-task-complete',
