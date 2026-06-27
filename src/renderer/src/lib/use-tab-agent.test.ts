@@ -290,6 +290,21 @@ describe('resolveTabAgentFromSignals', () => {
     ).toBe('openclaude')
   })
 
+  it('lets an explicit title override stale launch identity after the pane shows newer activity', () => {
+    expect(
+      resolveTabAgentFromSignals({
+        foreground: undefined,
+        hasObservedAgentSignal: true,
+        shellForegroundAfterAgentSignal: false,
+        isRemote: false,
+        title: '✳ Claude Code',
+        hookAgent: null,
+        hasCompletedHook: false,
+        launchAgent: 'codex'
+      })
+    ).toBe('claude')
+  })
+
   it('lets shell foreground clear the icon after an agent was observed running', () => {
     expect(
       resolveTabAgentFromSignals({

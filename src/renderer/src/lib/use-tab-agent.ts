@@ -2,7 +2,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '@/store'
 import { recognizeAgentProcess } from '../../../shared/agent-process-recognition'
-import { isShellProcess, getAgentLabel, titleHasAgentName } from '../../../shared/agent-detection'
+import { isShellProcess } from '../../../shared/agent-detection'
+import type { TerminalTab, TuiAgent } from '../../../shared/types'
 import { worktreeUsesRemoteConnection } from '@/store/slices/terminals'
 import { parseRemoteRuntimePtyId } from '@/runtime/runtime-terminal-stream'
 import {
@@ -11,77 +12,14 @@ import {
   resolveSiblingCompletedTabAgent,
   resolveSiblingTabAgent
 } from './tab-agent'
-import type { TerminalTab, TuiAgent } from '../../../shared/types'
-
-// Maps getAgentLabel()'s product labels to TuiAgent ids — the fallback for
-// agents whose foreground PROCESS name isn't self-identifying (Claude Code runs
-// as `node`, but its "✳ Claude Code" title resolves here). Agents whose process
-// name already matches (codex, etc.) never reach this path.
-const TITLE_LABEL_TO_AGENT: Partial<Record<string, TuiAgent>> = {
-  'Claude Code': 'claude',
-  OpenClaude: 'openclaude',
-  Codex: 'codex',
-  'Gemini CLI': 'gemini',
-  'GitHub Copilot': 'copilot',
-  Grok: 'grok',
-  Devin: 'devin',
-  Antigravity: 'antigravity',
-  OpenCode: 'opencode',
-  Aider: 'aider',
-  Cursor: 'cursor',
-  Droid: 'droid',
-  Hermes: 'hermes',
-  Pi: 'pi'
-}
+import {
+  resolveExplicitTerminalTitleAgentType
+} from './terminal-title-agent-type'
 
 const HELPER_FOREGROUND_RETRY_DELAYS_MS = [250, 1250, 3500, 750] as const
 
-function agentFromTitle(title: string): TuiAgent | null {
-  const label = getAgentLabel(title)
-  return label ? (TITLE_LABEL_TO_AGENT[label] ?? null) : null
-}
-
-function containsBrailleSpinner(title: string): boolean {
-  for (const char of title) {
-    const codePoint = char.codePointAt(0)
-    if (codePoint !== undefined && codePoint >= 0x2800 && codePoint <= 0x28ff) {
-      return true
-    }
-  }
-  return false
-}
-
-function hasGenericClaudeStatusPrefix(title: string): boolean {
-  return (
-    containsBrailleSpinner(title) ||
-    title.startsWith('✳ ') ||
-    title === '✳' ||
-    title.startsWith('. ') ||
-    title.startsWith('* ')
-  )
-}
-
-function isGenericClaudeStatusClaim(title: string, titleAgent: TuiAgent | null): boolean {
-  return (
-    titleAgent === 'claude' &&
-    hasGenericClaudeStatusPrefix(title) &&
-    !titleHasAgentName(title, 'claude')
-  )
-}
-
-function agentFromTabTitle(title: string): TuiAgent | null {
-  const titleAgent = agentFromTitle(title)
-  if (isGenericClaudeStatusClaim(title, titleAgent)) {
-    // Why: bare Claude status prefixes are activity evidence, not identity.
-    // Keep them out of tab icons so task/worktree titles cannot become Claude
-    // without a hook, launch intent, foreground process, or explicit name.
-    return null
-  }
-  return titleAgent
-}
-
 function getTitleForegroundKey(title: string, launchAgent?: TuiAgent): string {
-  const titleAgent = launchAgent ? null : agentFromTabTitle(title)
+  const titleAgent = launchAgent ? null : resolveExplicitTerminalTitleAgentType(title)
   if (titleAgent) {
     return `agent:${titleAgent}`
   }
@@ -94,7 +32,7 @@ function getTitleForegroundKey(title: string, launchAgent?: TuiAgent): string {
     // Why: unknown agents may still animate leading status glyphs. Include the
     // stable title body so first launch from "Terminal 1" triggers one poll,
     // without polling on every spinner frame.
-    .replace(/^(?:[✳✦⏲◇✋⠀-⣿]+|[.*]\s)\s*/, '')
+    .replace(/^(?:[\u2733\u2726\u23f2\u25c7\u270b\u2800-\u28ff]+|[.*]\s)\s*/, '')
     .slice(0, 48)
   return `unknown:${stableTitle}`
 }
@@ -112,7 +50,15 @@ export function resolveTabAgentFromSignals(args: {
   launchAgent?: TuiAgent
 }): TuiAgent | null {
   const launchAgent = args.launchAgent ?? null
-  const titleAgent = launchAgent ? null : agentFromTabTitle(args.title)
+  const explicitTitleAgent = resolveExplicitTerminalTitleAgentType(args.title)
+  const titleOverridesLaunch =
+    launchAgent !== null &&
+    explicitTitleAgent !== null &&
+    explicitTitleAgent !== launchAgent &&
+    args.hasObservedAgentSignal
+  const titleAgent = titleOverridesLaunch
+    ? explicitTitleAgent
+    : (launchAgent ? null : explicitTitleAgent)
   const titleLooksShell = isShellProcess(args.title)
   // Why: remote panes cannot cheaply prove shell foreground after hook exit,
   // so keep the last completed hook identity instead of flashing unknown.
@@ -126,7 +72,7 @@ export function resolveTabAgentFromSignals(args: {
   const activeLaunchAgent =
     localShellForegroundClearedLaunch || remoteCompletedHookAtShellTitle ? null : launchAgent
   if (args.isRemote || args.foreground === undefined) {
-    return focusedHookAgent ?? activeLaunchAgent ?? fallbackHookAgent ?? titleAgent
+    return focusedHookAgent ?? titleAgent ?? activeLaunchAgent ?? fallbackHookAgent
   }
   if (args.foreground) {
     return args.foreground
@@ -136,25 +82,25 @@ export function resolveTabAgentFromSignals(args: {
   if (args.shellForegroundAfterAgentSignal) {
     return null
   }
-  return focusedHookAgent ?? activeLaunchAgent ?? fallbackHookAgent ?? titleAgent
+  return focusedHookAgent ?? titleAgent ?? activeLaunchAgent ?? fallbackHookAgent
 }
 
 /**
  * Resolve which coding-harness agent a terminal tab is running, for its tab-bar
  * icon. Layered signals, most-authoritative first:
  *
- * 1. Live foreground process — the ground truth for what's running *now*: the
+ * 1. Live foreground process - the ground truth for what's running now: the
  *    only signal that reverts to the terminal glyph when the agent exits to a
  *    shell, or flips when a different agent starts in the same pane. Checked
- *    event-driven (only when the tab's title changes — exactly when an agent
+ *    event-driven (only when the tab's title changes - exactly when an agent
  *    starts/exits/takes a turn), never on an interval, and only for local panes
  *    (SSH foreground inspection is a 15s-timeout RPC). A recognized agent wins;
  *    a recognized shell authoritatively means "no agent".
- * 2. Hook status — accurate provider identity from native integrations, and
+ * 2. Hook status - accurate provider identity from native integrations, and
  *    available for SSH/remote panes where foreground polling is too costly.
- * 3. launchAgent — what Orca launched here; instant bootstrap before hooks or
+ * 3. launchAgent - what Orca launched here; instant bootstrap before hooks or
  *    foreground polling arrive, and the owned identity for startup windows.
- * 4. Title — legacy/unknown-session fallback only. It is ignored while
+ * 4. Title - legacy/unknown-session fallback only. It is ignored while
  *    launchAgent exists, and generic spinner-only titles do not identify an agent.
  */
 export function useTabAgent(tab: TerminalTab): TuiAgent | null {
@@ -223,7 +169,7 @@ export function useTabAgent(tab: TerminalTab): TuiAgent | null {
 
   useEffect(() => {
     const fallbackAgentSignal =
-      !tab.launchAgent && (agentFromTabTitle(tab.title) || siblingHookAgent)
+      !tab.launchAgent && (resolveExplicitTerminalTitleAgentType(tab.title) || siblingHookAgent)
     // Why: a completed structured hook proves a launched agent existed, but
     // local launch cleanup still waits for current foreground-shell evidence.
     if (focusedHookAgent || hasCompletedHook || fallbackAgentSignal) {
@@ -239,7 +185,7 @@ export function useTabAgent(tab: TerminalTab): TuiAgent | null {
     const localPtyId = ptyId
     let cancelled = false
     const helperForegroundRetryTimers: number[] = []
-    // Why: re-runs when ptyId or tab.title changes — a title change is the event
+    // Why: re-runs when ptyId or tab.title changes - a title change is the event
     // signalling a possible foreground transition (agent start, exit, or turn).
     // One RPC per transition, not a timer; cancellation coalesces rapid churn.
     function readForeground(retryIndex = 0): void {

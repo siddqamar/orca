@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
 import { useAppStore } from '@/store'
+import { resolveExplicitTerminalTitleAgentType } from '@/lib/terminal-title-agent-type'
 import { getRepoMapFromState, getWorktreeMapFromState } from '@/store/selectors'
 import { playDesktopNotificationSound } from '@/lib/desktop-notification-sound'
 import { buildAgentNotificationId } from '../../../../shared/agent-notification-id'
@@ -39,13 +40,20 @@ export function dispatchTerminalNotification(
   event: TerminalNotificationEvent
 ): void {
   const state = useAppStore.getState()
+  const explicitTitleAgentType =
+    event.source === 'agent-task-complete' && event.terminalTitle
+      ? resolveExplicitTerminalTitleAgentType(event.terminalTitle)
+      : null
   const storedAgentStatus =
     event.source === 'agent-task-complete' && event.paneKey
       ? state.agentStatusByPaneKey[event.paneKey]
       : undefined
   const freshStoredAgentStatus =
     storedAgentStatus &&
-    Date.now() - storedAgentStatus.updatedAt <= AGENT_NOTIFICATION_SNAPSHOT_MAX_AGE_MS
+    Date.now() - storedAgentStatus.updatedAt <= AGENT_NOTIFICATION_SNAPSHOT_MAX_AGE_MS &&
+    (!explicitTitleAgentType ||
+      !storedAgentStatus.agentType ||
+      storedAgentStatus.agentType === explicitTitleAgentType)
       ? storedAgentStatus
       : undefined
   const agentStatus =

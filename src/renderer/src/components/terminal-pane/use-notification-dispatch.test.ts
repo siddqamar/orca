@@ -445,6 +445,32 @@ describe('dispatchTerminalNotification', () => {
     expect(mockState.markTerminalPaneUnread).toHaveBeenCalledWith(paneKey)
   })
 
+  it('does not reuse a fresh stale agent snapshot when the terminal title names another agent', () => {
+    mockState.agentStatusByPaneKey[paneKey] = makeAgentStatus(paneKey, {
+      agentType: 'codex',
+      terminalTitle: 'Codex',
+      lastAssistantMessage: 'Codex done.'
+    })
+
+    dispatchTerminalNotification('wt-primary', {
+      source: 'agent-task-complete',
+      terminalTitle: '✳ Claude Code',
+      paneKey
+    })
+
+    const dispatchArgs = window.api.notifications.dispatch.mock.calls.at(-1)?.[0]
+    expect(dispatchArgs).toEqual(
+      expect.objectContaining({
+        source: 'agent-task-complete',
+        worktreeId: 'wt-primary',
+        paneKey,
+        terminalTitle: '✳ Claude Code'
+      })
+    )
+    expect(dispatchArgs?.agentType).toBeUndefined()
+    expect(dispatchArgs?.agentLastAssistantMessage).toBeUndefined()
+  })
+
   it('drops a delayed completion snapshot when the pane has already started a newer turn', () => {
     const previousDoneStartedAt = Date.now() - 10_000
     mockState.agentStatusByPaneKey[paneKey] = makeAgentStatus(paneKey, {
