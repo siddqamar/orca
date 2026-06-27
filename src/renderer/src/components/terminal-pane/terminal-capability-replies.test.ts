@@ -62,6 +62,55 @@ describe('installTerminalCapabilityReplyHandlers', () => {
     }
   })
 
+  it('answers OSC foreground and background color queries from the active theme', async () => {
+    const term = new Terminal({ cols: 80, rows: 24, allowProposedApi: true })
+    term.options.theme = {
+      foreground: '#2e3434',
+      background: '#ffffff'
+    }
+    const sendInput = vi.fn<(data: string) => boolean>(() => true)
+    const disposable = installTerminalCapabilityReplyHandlers({
+      terminal: term as never,
+      parser: term.parser,
+      sendInput,
+      isReplaying: () => false
+    })
+
+    try {
+      await writeTerminal(term, '\x1b]10;?\x1b\\\x1b]11;?\x1b\\')
+
+      expect(sendInput).toHaveBeenCalledWith('\x1b]10;rgb:2e2e/3434/3434\x1b\\')
+      expect(sendInput).toHaveBeenCalledWith('\x1b]11;rgb:ffff/ffff/ffff\x1b\\')
+    } finally {
+      disposable.dispose()
+      term.dispose()
+    }
+  })
+
+  it('consumes replayed OSC color queries without sending input to the shell', async () => {
+    const term = new Terminal({ cols: 80, rows: 24, allowProposedApi: true })
+    term.options.theme = {
+      foreground: '#2e3434',
+      background: '#ffffff'
+    }
+    const sendInput = vi.fn<(data: string) => boolean>(() => true)
+    const disposable = installTerminalCapabilityReplyHandlers({
+      terminal: term as never,
+      parser: term.parser,
+      sendInput,
+      isReplaying: () => true
+    })
+
+    try {
+      await writeTerminal(term, '\x1b]11;?\x1b\\')
+
+      expect(sendInput).not.toHaveBeenCalled()
+    } finally {
+      disposable.dispose()
+      term.dispose()
+    }
+  })
+
   it('answers window and cell pixel-size reports from renderer geometry', () => {
     const sendInput = vi.fn<(data: string) => boolean>(() => true)
     const observe = createTerminalPixelSizeQueryResponder(
@@ -128,7 +177,8 @@ describe('installTerminalCapabilityReplyHandlers', () => {
             const value = cb(params) as boolean
             returnValues.push(value)
             return value
-          })
+          }),
+        registerOscHandler: (id, cb) => term.parser.registerOscHandler(id, cb)
       },
       sendInput,
       isReplaying: () => false
