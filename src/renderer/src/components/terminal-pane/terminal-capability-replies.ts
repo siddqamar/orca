@@ -64,21 +64,53 @@ function cssColorToOscRgb(value: string | undefined): string | null {
       expanded.slice(2, 4)
     )}/${byteHexToWord(expanded.slice(4, 6))}`
   }
-  const rgb = /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,[^)]+)?\)$/i.exec(
-    trimmed
-  )
+  const rgb = /^rgba?\(\s*([^)]+)\)$/i.exec(trimmed)
   if (!rgb) {
     return null
   }
-  const [red, green, blue] = rgb.slice(1, 4).map((component) => {
-    const byte = Math.min(255, Math.max(0, Number(component)))
-    return byte.toString(16).padStart(2, '0').repeat(2)
-  })
+  const channels = parseCssRgbChannels(rgb[1])
+  if (!channels) {
+    return null
+  }
+  const [red, green, blue] = channels.map((byte) => byte.toString(16).padStart(2, '0').repeat(2))
   return `rgb:${red}/${green}/${blue}`
 }
 
 function byteHexToWord(byte: string): string {
   return byte.repeat(2)
+}
+
+function parseCssRgbChannels(body: string): [number, number, number] | null {
+  const colorPart = body.split('/')[0]?.trim()
+  if (!colorPart) {
+    return null
+  }
+  const components = colorPart.includes(',')
+    ? colorPart.split(',').slice(0, 3)
+    : colorPart.split(/\s+/).slice(0, 3)
+  if (components.length !== 3) {
+    return null
+  }
+  const channels = components.map((component) => parseCssRgbChannel(component.trim()))
+  if (channels.some((channel) => channel === null)) {
+    return null
+  }
+  return channels as [number, number, number]
+}
+
+function parseCssRgbChannel(component: string): number | null {
+  const percent = /^(\d+(?:\.\d+)?)%$/.exec(component)?.[1]
+  if (percent !== undefined) {
+    return clampByte((Number(percent) / 100) * 255)
+  }
+  if (!/^\d+(?:\.\d+)?$/.test(component)) {
+    return null
+  }
+  return clampByte(Number(component))
+}
+
+function clampByte(value: number): number {
+  return Math.min(255, Math.max(0, Math.round(value)))
 }
 
 function isOscColorQuery(data: string): boolean {
