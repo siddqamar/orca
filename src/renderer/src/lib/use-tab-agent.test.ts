@@ -139,7 +139,7 @@ describe('resolveTabAgentFromSignals', () => {
     ).toBe('openclaude')
   })
 
-  it('keeps title fallback for real Gemini and Pi titles', () => {
+  it('keeps title fallback for real Gemini, MiMo, and Pi titles', () => {
     expect(
       resolveTabAgentFromSignals({
         foreground: undefined,
@@ -152,6 +152,19 @@ describe('resolveTabAgentFromSignals', () => {
         launchAgent: undefined
       })
     ).toBe('gemini')
+
+    expect(
+      resolveTabAgentFromSignals({
+        foreground: undefined,
+        hasObservedAgentSignal: false,
+        shellForegroundAfterAgentSignal: false,
+        isRemote: false,
+        title: 'MiMo Code',
+        hookAgent: null,
+        hasCompletedHook: false,
+        launchAgent: undefined
+      })
+    ).toBe('mimo-code')
 
     expect(
       resolveTabAgentFromSignals({

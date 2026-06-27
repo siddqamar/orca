@@ -11,6 +11,7 @@ const TITLE_LABEL_TO_AGENT: Partial<Record<string, TuiAgent>> = {
   Devin: 'devin',
   Antigravity: 'antigravity',
   OpenCode: 'opencode',
+  'MiMo Code': 'mimo-code',
   Aider: 'aider',
   Cursor: 'cursor',
   Droid: 'droid',

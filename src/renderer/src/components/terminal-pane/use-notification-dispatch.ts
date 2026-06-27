@@ -51,9 +51,7 @@ export function dispatchTerminalNotification(
   const freshStoredAgentStatus =
     storedAgentStatus &&
     Date.now() - storedAgentStatus.updatedAt <= AGENT_NOTIFICATION_SNAPSHOT_MAX_AGE_MS &&
-    (!explicitTitleAgentType ||
-      !storedAgentStatus.agentType ||
-      storedAgentStatus.agentType === explicitTitleAgentType)
+    (!explicitTitleAgentType || storedAgentStatus.agentType === explicitTitleAgentType)
       ? storedAgentStatus
       : undefined
   const agentStatus =
