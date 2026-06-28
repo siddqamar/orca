@@ -438,6 +438,28 @@ describe('resolvePrimaryAction Create PR intent', () => {
     })
   })
 
+  it('keeps stale Create MR eligibility disabled with provider-aware loading copy', () => {
+    expect(
+      resolveCreatePrHeaderAction(
+        inputs({
+          hostedReviewCreation: {
+            provider: 'gitlab',
+            review: null,
+            canCreate: true,
+            blockedReason: null,
+            nextAction: null
+          },
+          isHostedReviewCreationLoading: true
+        })
+      )
+    ).toEqual({
+      kind: 'create_pr',
+      label: 'Create MR',
+      title: 'Checking whether this branch can create a merge request…',
+      disabled: true
+    })
+  })
+
   it('returns a clickable Create PR header notice path when the branch has nothing to publish yet', () => {
     expect(
       resolveCreatePrHeaderAction(

@@ -612,6 +612,13 @@ type HostedReviewCreationRequestState = {
   status: 'loading' | 'failed'
 }
 
+type HostedReviewCreationProviderHint = {
+  repoId: string | null
+  worktreeId: string | null
+  branch: string
+  provider: HostedReviewProvider
+}
+
 type CreatedHostedReview = {
   provider: HostedReviewProvider
   number: number
@@ -990,6 +997,12 @@ function SourceControlInner(): React.JSX.Element {
     useState<HostedReviewCreationState | null>(null)
   const [hostedReviewCreationRequestState, setHostedReviewCreationRequestState] =
     useState<HostedReviewCreationRequestState | null>(null)
+  const hostedReviewCreationProviderHintRef = useRef<HostedReviewCreationProviderHint>({
+    repoId: null,
+    worktreeId: null,
+    branch: '',
+    provider: 'github'
+  })
   const createPrInFlightRef = useRef<Record<string, boolean>>({})
   const [createPrInFlightByWorktree, setCreatePrInFlightByWorktree] = useState<
     Record<string, boolean>
@@ -1397,13 +1410,16 @@ function SourceControlInner(): React.JSX.Element {
     hostedReviewCreationRequestMatchesCurrent &&
     hostedReviewCreationRequestState.status === 'loading' &&
     hostedReview === null
-  const hostedReviewCreationForHeader = useMemo(() => {
-    // Why: a fresh preflight must disable stale Create PR eligibility while
-    // upstream/dirty/base state is reconciling after commit or push.
-    if (isHostedReviewCreationLoading) {
-      const provider = resolveProvisionalHostedReviewProvider({
+  const provisionalHostedReviewProvider = useMemo(
+    () =>
+      resolveProvisionalHostedReviewProvider({
         hostedReview,
-        hostedReviewCreationState,
+        hostedReviewCreationState: hostedReviewCreation
+          ? {
+              repoId: activeRepo?.id ?? '',
+              data: hostedReviewCreation
+            }
+          : null,
         activeRepoId: activeRepo?.id ?? null,
         linkedGitHubPR,
         fallbackGitHubPR: fallbackGitHubPRNumber,
@@ -1411,22 +1427,74 @@ function SourceControlInner(): React.JSX.Element {
         linkedBitbucketPR,
         linkedAzureDevOpsPR,
         linkedGiteaPR
-      })
+      }),
+    [
+      activeRepo?.id,
+      fallbackGitHubPRNumber,
+      hostedReview,
+      hostedReviewCreation,
+      linkedAzureDevOpsPR,
+      linkedBitbucketPR,
+      linkedGitHubPR,
+      linkedGitLabMR,
+      linkedGiteaPR
+    ]
+  )
+  useEffect(() => {
+    const hasConcreteProviderHint =
+      hostedReview !== null ||
+      hostedReviewCreation !== null ||
+      linkedGitHubPR !== null ||
+      fallbackGitHubPRNumber !== null ||
+      linkedGitLabMR !== null ||
+      linkedAzureDevOpsPR !== null ||
+      linkedGiteaPR !== null
+
+    if (!hasConcreteProviderHint) {
+      return
+    }
+
+    hostedReviewCreationProviderHintRef.current = {
+      repoId: activeRepo?.id ?? null,
+      worktreeId: activeWorktreeId ?? null,
+      branch: branchName,
+      provider: provisionalHostedReviewProvider
+    }
+  }, [
+    activeRepo?.id,
+    activeWorktreeId,
+    branchName,
+    fallbackGitHubPRNumber,
+    hostedReview,
+    hostedReviewCreation,
+    linkedAzureDevOpsPR,
+    linkedGiteaPR,
+    linkedGitHubPR,
+    linkedGitLabMR,
+    provisionalHostedReviewProvider
+  ])
+  const hostedReviewCreationForHeader = useMemo(() => {
+    // Why: a fresh preflight must disable stale Create PR eligibility while
+    // upstream/dirty/base state is reconciling after commit or push, while
+    // preserving provider copy from the previous safe snapshot.
+    if (isHostedReviewCreationLoading) {
+      const providerHint = hostedReviewCreationProviderHintRef.current
+      const provider =
+        providerHint.repoId === (activeRepo?.id ?? null) &&
+        providerHint.worktreeId === (activeWorktreeId ?? null) &&
+        providerHint.branch === branchName
+          ? providerHint.provider
+          : provisionalHostedReviewProvider
       return buildLoadingHostedReviewCreationEligibility(provider)
     }
     return hostedReviewCreation
   }, [
     activeRepo?.id,
-    fallbackGitHubPRNumber,
-    hostedReview,
+    activeWorktreeId,
+    branchName,
     hostedReviewCreation,
-    hostedReviewCreationState,
     isHostedReviewCreationLoading,
-    linkedAzureDevOpsPR,
-    linkedBitbucketPR,
-    linkedGitHubPR,
-    linkedGitLabMR,
-    linkedGiteaPR
+    provisionalHostedReviewProvider
   ])
   const hasHostedReviewLink = hasPositiveHostedReviewNumberLink({
     linkedGitHubPR,
