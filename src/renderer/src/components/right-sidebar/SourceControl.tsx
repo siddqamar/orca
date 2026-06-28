@@ -1396,27 +1396,25 @@ function SourceControlInner(): React.JSX.Element {
     shouldResolveHostedReviewCreation &&
     hostedReviewCreationRequestMatchesCurrent &&
     hostedReviewCreationRequestState.status === 'loading' &&
-    hostedReviewCreation === null &&
     hostedReview === null
   const hostedReviewCreationForHeader = useMemo(() => {
-    if (hostedReviewCreation) {
-      return hostedReviewCreation
+    // Why: a fresh preflight must disable stale Create PR eligibility while
+    // upstream/dirty/base state is reconciling after commit or push.
+    if (isHostedReviewCreationLoading) {
+      const provider = resolveProvisionalHostedReviewProvider({
+        hostedReview,
+        hostedReviewCreationState,
+        activeRepoId: activeRepo?.id ?? null,
+        linkedGitHubPR,
+        fallbackGitHubPR: fallbackGitHubPRNumber,
+        linkedGitLabMR,
+        linkedBitbucketPR,
+        linkedAzureDevOpsPR,
+        linkedGiteaPR
+      })
+      return buildLoadingHostedReviewCreationEligibility(provider)
     }
-    if (!isHostedReviewCreationLoading) {
-      return null
-    }
-    const provider = resolveProvisionalHostedReviewProvider({
-      hostedReview,
-      hostedReviewCreationState,
-      activeRepoId: activeRepo?.id ?? null,
-      linkedGitHubPR,
-      fallbackGitHubPR: fallbackGitHubPRNumber,
-      linkedGitLabMR,
-      linkedBitbucketPR,
-      linkedAzureDevOpsPR,
-      linkedGiteaPR
-    })
-    return buildLoadingHostedReviewCreationEligibility(provider)
+    return hostedReviewCreation
   }, [
     activeRepo?.id,
     fallbackGitHubPRNumber,
@@ -2943,6 +2941,9 @@ function SourceControlInner(): React.JSX.Element {
       branch: branchName,
       status: 'loading'
     })
+    // Why: upstream/status changes can make the previous eligibility unsafe
+    // to click while the new preflight is still resolving.
+    setHostedReviewCreationState(null)
     void getHostedReviewCreationEligibility({
       repoPath: activeRepo.path,
       repoId: activeRepo.id,
@@ -4447,6 +4448,7 @@ function SourceControlInner(): React.JSX.Element {
   const branchCompareRunPromiseRef = useRef<Promise<void> | null>(null)
   const refreshBranchCompareRef = useRef<() => Promise<void>>(async () => {})
   const branchCompareStatusHeadRef = useRef<BranchCompareStatusHeadSnapshot | null>(null)
+  const branchCompareRemoteStatusRef = useRef<BranchCompareRemoteStatusSnapshot | null>(null)
 
   const runBranchCompare = useCallback(async () => {
     if (!activeWorktreeId || !worktreePath || !effectiveBaseRef || isFolder) {
@@ -4640,6 +4642,39 @@ function SourceControlInner(): React.JSX.Element {
     effectiveBaseRef,
     isBranchVisible,
     isFolder,
+    worktreePath
+  ])
+
+  useEffect(() => {
+    if (!activeWorktreeId || !worktreePath || !isBranchVisible || !effectiveBaseRef || isFolder) {
+      branchCompareRemoteStatusRef.current = null
+      return
+    }
+
+    // Why: pushing a branch can move its remote-tracking base and ahead count
+    // without changing local HEAD, so the HEAD-change effect alone misses it.
+    const current = {
+      ahead: remoteStatus?.ahead ?? null,
+      baseRef: effectiveBaseRef,
+      behind: remoteStatus?.behind ?? null,
+      hasUpstream: remoteStatus?.hasUpstream ?? null,
+      upstreamName: remoteStatus?.upstreamName ?? null,
+      worktreeId: activeWorktreeId
+    }
+    const previous = branchCompareRemoteStatusRef.current
+    branchCompareRemoteStatusRef.current = current
+    if (shouldRefreshBranchCompareForRemoteStatus(previous, current)) {
+      void refreshBranchCompareRef.current()
+    }
+  }, [
+    activeWorktreeId,
+    effectiveBaseRef,
+    isBranchVisible,
+    isFolder,
+    remoteStatus?.ahead,
+    remoteStatus?.behind,
+    remoteStatus?.hasUpstream,
+    remoteStatus?.upstreamName,
     worktreePath
   ])
 
@@ -6855,6 +6890,15 @@ type BranchCompareStatusHeadSnapshot = {
   worktreeId: string
 }
 
+type BranchCompareRemoteStatusSnapshot = {
+  ahead: number | null
+  baseRef: string
+  behind: number | null
+  hasUpstream: boolean | null
+  upstreamName: string | null
+  worktreeId: string
+}
+
 export function shouldRefreshBranchCompareForStatusHead(
   previous: BranchCompareStatusHeadSnapshot | null,
   current: BranchCompareStatusHeadSnapshot
@@ -6865,6 +6909,21 @@ export function shouldRefreshBranchCompareForStatusHead(
     previous.worktreeId === current.worktreeId &&
     previous.baseRef === current.baseRef &&
     previous.statusHead !== current.statusHead
+  )
+}
+
+export function shouldRefreshBranchCompareForRemoteStatus(
+  previous: BranchCompareRemoteStatusSnapshot | null,
+  current: BranchCompareRemoteStatusSnapshot
+): boolean {
+  return (
+    previous !== null &&
+    previous.worktreeId === current.worktreeId &&
+    previous.baseRef === current.baseRef &&
+    (previous.hasUpstream !== current.hasUpstream ||
+      previous.upstreamName !== current.upstreamName ||
+      previous.ahead !== current.ahead ||
+      previous.behind !== current.behind)
   )
 }
 
