@@ -176,6 +176,8 @@ function trimTrailingDefaultBackgroundWhitespace(
   segments: RtlTextSegment[],
   rowStyle: RtlRowStyle
 ): RtlTextSegment[] {
+  // Why: let xterm paint untouched trailing cells; trimming highlighted spaces
+  // here would collapse non-default background runs and shift their visuals.
   const trimmed = [...segments]
   while (trimmed.length > 0) {
     const last = trimmed.at(-1)
