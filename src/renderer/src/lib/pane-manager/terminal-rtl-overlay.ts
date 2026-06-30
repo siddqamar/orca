@@ -1,11 +1,14 @@
 import type { IDisposable, Terminal } from '@xterm/xterm'
-
-type BufferLineLike = {
-  translateToString(trimRight?: boolean, startColumn?: number, endColumn?: number): string
-}
+import {
+  renderTerminalRtlOverlayRow,
+  resolveTerminalRtlRowStyle,
+  type BufferCellLike,
+  type BufferLineLike
+} from './terminal-rtl-overlay-row-content'
 
 type BufferLike = {
   viewportY: number
+  getNullCell(): BufferCellLike
   getLine(y: number): BufferLineLike | undefined
 }
 
@@ -23,7 +26,6 @@ export type TerminalRtlOverlayModel = {
 }
 
 const RTL_SCRIPT_RE = /[\u0590-\u08ff\ufb50-\ufdff\ufe70-\ufeff]/u
-const TRANSPARENT_COLORS = new Set(['transparent', 'rgba(0, 0, 0, 0)'])
 
 export function terminalLineNeedsRtlOverlay(text: string): boolean {
   return RTL_SCRIPT_RE.test(text)
@@ -159,62 +161,26 @@ function syncOverlayRows(
   cellHeight: number
 ): void {
   const fragment = document.createDocumentFragment()
-  const rowStyle = resolveRtlRowStyle(terminal, screenElement)
+  const rowStyle = resolveTerminalRtlRowStyle(terminal, screenElement)
+  const nullCell = terminal.buffer.active.getNullCell()
 
   for (const row of rows) {
     const rowElement = document.createElement('div')
     rowElement.className = 'orca-terminal-rtl-overlay-row'
     rowElement.dataset.bufferLine = String(row.bufferLine)
-    rowElement.textContent = row.text
     rowElement.style.top = `${row.visualRow * cellHeight}px`
     rowElement.style.height = `${cellHeight}px`
     rowElement.style.lineHeight = `${cellHeight}px`
     rowElement.style.fontFamily = rowStyle.fontFamily
     rowElement.style.fontSize = rowStyle.fontSize
     rowElement.style.fontWeight = rowStyle.fontWeight
+    rowElement.style.fontStyle = rowStyle.fontStyle
     rowElement.style.letterSpacing = rowStyle.letterSpacing
     rowElement.style.color = rowStyle.color
     rowElement.style.backgroundColor = rowStyle.backgroundColor
+    renderTerminalRtlOverlayRow(rowElement, row, terminal, rowStyle, nullCell)
     fragment.appendChild(rowElement)
   }
 
   overlay.replaceChildren(fragment)
-}
-
-function resolveRtlRowStyle(
-  terminal: Terminal,
-  screenElement: HTMLElement
-): {
-  backgroundColor: string
-  color: string
-  fontFamily: string
-  fontSize: string
-  fontWeight: string
-  letterSpacing: string
-} {
-  const computedStyle = getComputedStyle(screenElement)
-  const theme = terminal.options.theme
-  const backgroundColor = theme?.background ?? resolveComputedBackground(computedStyle)
-
-  return {
-    backgroundColor,
-    color: theme?.foreground ?? computedStyle.color,
-    fontFamily: terminal.options.fontFamily ?? computedStyle.fontFamily,
-    fontSize:
-      typeof terminal.options.fontSize === 'number'
-        ? `${terminal.options.fontSize}px`
-        : computedStyle.fontSize,
-    fontWeight:
-      terminal.options.fontWeight == null
-        ? computedStyle.fontWeight
-        : String(terminal.options.fontWeight),
-    letterSpacing:
-      typeof terminal.options.letterSpacing === 'number'
-        ? `${terminal.options.letterSpacing}px`
-        : computedStyle.letterSpacing
-  }
-}
-
-function resolveComputedBackground(style: CSSStyleDeclaration): string {
-  return TRANSPARENT_COLORS.has(style.backgroundColor) ? 'inherit' : style.backgroundColor
 }
