@@ -139,6 +139,7 @@ export function createPaneDOM(
     paneDragCleanup,
     compositionHandler: null,
     focusClassSyncCleanup: null,
+    terminalRtlOverlayCleanup: null,
     terminalScrollIntentDisposable: null,
     pendingSplitScrollState: null,
     pendingSplitScrollRafIds: [],

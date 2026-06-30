@@ -17,6 +17,7 @@ import { attachTerminalMouseWheelMultiplier } from './pane-terminal-mouse-wheel'
 import { attachTerminalScrollIntentTracking } from './terminal-scroll-intent'
 import { attachDomRendererFocusClassSync } from './pane-dom-focus-class-sync'
 import { attachWebgl, cancelPendingWebglRefresh, disposeWebgl } from './pane-webgl-renderer'
+import { attachTerminalRtlOverlay } from './terminal-rtl-overlay'
 
 // ---------------------------------------------------------------------------
 // Pane creation, terminal open/close, addon management
@@ -104,6 +105,7 @@ export function openTerminal(pane: ManagedPaneInternal): void {
   }
 
   pane.focusClassSyncCleanup = attachDomRendererFocusClassSync(terminal.element)
+  pane.terminalRtlOverlayCleanup = attachTerminalRtlOverlay(terminal, xtermContainer)
 
   if (pane.gpuRenderingEnabled) {
     attachWebgl(pane)
@@ -197,6 +199,8 @@ export function disposePane(
   pane.paneDragCleanup = null
   pane.focusClassSyncCleanup?.()
   pane.focusClassSyncCleanup = null
+  pane.terminalRtlOverlayCleanup?.()
+  pane.terminalRtlOverlayCleanup = null
   pane.terminalScrollIntentDisposable?.dispose()
   pane.terminalScrollIntentDisposable = null
   if (pane.compositionHandler) {

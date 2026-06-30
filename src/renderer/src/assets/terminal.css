@@ -492,6 +492,28 @@
   margin-left: var(--pane-padding-x, 4px);
 }
 
+.orca-terminal-rtl-overlay {
+  contain: strict;
+  overflow: hidden;
+  pointer-events: none;
+  position: absolute;
+  user-select: none;
+  z-index: 5;
+}
+
+.orca-terminal-rtl-overlay-row {
+  direction: ltr;
+  left: 0;
+  margin: 0;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  right: 0;
+  text-align: left;
+  unicode-bidi: isolate;
+  white-space: pre;
+}
+
 /* When a pane has a title, shift the terminal content down to make room.
    The .pane container uses position: relative, so the absolutely-positioned
    title bar occupies the top title-height pixels. Height is reduced by the
