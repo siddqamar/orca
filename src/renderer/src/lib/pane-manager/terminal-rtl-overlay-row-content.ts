@@ -1,28 +1,11 @@
 import type { Terminal } from '@xterm/xterm'
+import { resolveTerminalAnsiPalette } from './terminal-rtl-overlay-palette'
 
 const TRANSPARENT_COLORS = new Set(['transparent', 'rgba(0, 0, 0, 0)'])
 const XTERM_COLOR_MODE_DEFAULT = 0
 const XTERM_COLOR_MODE_P16 = 0x1000000
 const XTERM_COLOR_MODE_P256 = 0x2000000
 const XTERM_COLOR_MODE_RGB = 0x3000000
-const ANSI_THEME_KEYS = [
-  'black',
-  'red',
-  'green',
-  'yellow',
-  'blue',
-  'magenta',
-  'cyan',
-  'white',
-  'brightBlack',
-  'brightRed',
-  'brightGreen',
-  'brightYellow',
-  'brightBlue',
-  'brightMagenta',
-  'brightCyan',
-  'brightWhite'
-] as const
 
 export type BufferCellLike = {
   getBgColor(): number
@@ -268,7 +251,7 @@ function rtlTextStylesMatch(left: RtlTextStyle, right: RtlTextStyle): boolean {
 }
 
 function resolveAnsiPalette(theme: Terminal['options']['theme']): string[] {
-  return ANSI_THEME_KEYS.map((key) => theme?.[key] ?? '')
+  return resolveTerminalAnsiPalette(theme)
 }
 
 function resolveTerminalCellColor(

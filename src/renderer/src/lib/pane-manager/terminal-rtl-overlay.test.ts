@@ -26,6 +26,7 @@ type CellOverrides = Partial<{
 
 const XTERM_COLOR_MODE_DEFAULT = 0
 const XTERM_COLOR_MODE_P16 = 0x1000000
+const XTERM_COLOR_MODE_P256 = 0x2000000
 
 function createTerminalEvent() {
   const listeners = new Set<Listener>()
@@ -258,6 +259,61 @@ describe('terminal RTL overlay', () => {
     expect((row?.children[2] as HTMLElement | undefined)?.textContent).toBe('\u0627')
     expect((row?.children[2] as HTMLElement | undefined)?.style.color).toBe('#111111')
     expect((row?.children[2] as HTMLElement | undefined)?.style.backgroundColor).toBe('#eeeeee')
+
+    cleanup()
+  })
+
+  it('uses the full xterm P256 palette and extendedAnsi overrides in RTL rows', () => {
+    const xtermContainer = document.createElement('div')
+    const terminalElement = document.createElement('div')
+    const screenElement = document.createElement('div')
+    screenElement.className = 'xterm-screen'
+    terminalElement.appendChild(screenElement)
+    xtermContainer.appendChild(terminalElement)
+    document.body.appendChild(xtermContainer)
+    setElementRect(xtermContainer, createRect(0, 0, 400, 40))
+    setElementRect(screenElement, createRect(0, 0, 400, 40))
+
+    const extendedAnsi: string[] = []
+    extendedAnsi[185] = '#123456'
+
+    const terminal = {
+      buffer: {
+        active: {
+          viewportY: 0,
+          getLine: () =>
+            createBufferLine('\u0645\u0631', [
+              createBufferCell({ chars: '\u0645', fgColorMode: XTERM_COLOR_MODE_P256, fgColor: 196 }),
+              createBufferCell({ chars: '\u0631', fgColorMode: XTERM_COLOR_MODE_P256, fgColor: 201 })
+            ]),
+          getNullCell: () => createBufferCell()
+        }
+      },
+      cols: 2,
+      element: terminalElement,
+      hasSelection: vi.fn(() => false),
+      onRender: createTerminalEvent().event,
+      onResize: createTerminalEvent().event,
+      onScroll: createTerminalEvent().event,
+      onSelectionChange: createTerminalEvent().event,
+      onWriteParsed: createTerminalEvent().event,
+      options: {
+        theme: {
+          background: '#111111',
+          foreground: '#eeeeee',
+          extendedAnsi
+        }
+      },
+      rows: 1
+    } as unknown as Terminal
+
+    const cleanup = attachTerminalRtlOverlay(terminal, xtermContainer)
+    flushAnimationFrames()
+
+    const row = xtermContainer.querySelector<HTMLElement>('.orca-terminal-rtl-overlay-row')
+    expect(row?.children).toHaveLength(2)
+    expect((row?.children[0] as HTMLElement | undefined)?.style.color).toBe('#ff0000')
+    expect((row?.children[1] as HTMLElement | undefined)?.style.color).toBe('#123456')
 
     cleanup()
   })
