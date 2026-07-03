@@ -30,6 +30,8 @@ export function useTerminalLiveInputModePreference({
   const pendingLiveInputDefaultHandlesRef = useRef<Set<string>>(new Set())
 
   const defaultTerminalHandlesToLiveInput = useCallback((handles: readonly string[]) => {
+    // Why: terminal discovery (tab snapshots, list poll, create) can arrive
+    // before the async persisted-disabled load on worktree re-entry.
     if (!disabledLiveInputHydratedRef.current) {
       for (const handle of handles) {
         pendingLiveInputDefaultHandlesRef.current.add(handle)
@@ -77,7 +79,7 @@ export function useTerminalLiveInputModePreference({
       disabledLiveInputTerminalHandlesRef.current.delete(handle)
       prunedDisabledHandles = true
     }
-    if (prunedDisabledHandles) {
+    if (prunedDisabledHandles && disabledLiveInputHydratedRef.current) {
       persistDisabledLiveInputHandles()
     }
     if (!result.changed) {
@@ -98,7 +100,9 @@ export function useTerminalLiveInputModePreference({
       ])
       liveHandles.delete(handle)
       if (disabledLiveInputTerminalHandlesRef.current.delete(handle)) {
-        persistDisabledLiveInputHandles()
+        if (disabledLiveInputHydratedRef.current) {
+          persistDisabledLiveInputHandles()
+        }
       }
       pruneTerminalHandlesFromLiveInput(liveHandles)
     },
@@ -108,13 +112,19 @@ export function useTerminalLiveInputModePreference({
   const toggleTerminalLiveInput = useCallback(
     (handle: string): boolean => {
       const nextEnabled = !liveInputTerminalHandlesRef.current.has(handle)
+      // Why: record user choice so hydration will prefer these edits over
+      // the value loaded from storage.
       disabledLiveInputEditedDuringHydrationRef.current = true
       if (nextEnabled) {
         disabledLiveInputTerminalHandlesRef.current.delete(handle)
       } else {
         disabledLiveInputTerminalHandlesRef.current.add(handle)
       }
-      persistDisabledLiveInputHandles()
+      // Why: only persist after hydration; an earlier write would use the
+      // reset-empty ref and overwrite other handles' opt-outs for the worktree.
+      if (disabledLiveInputHydratedRef.current) {
+        persistDisabledLiveInputHandles()
+      }
       setLiveInputTerminalHandles((prev) => {
         const next = new Set(prev)
         if (nextEnabled) {
@@ -140,15 +150,22 @@ export function useTerminalLiveInputModePreference({
     setLiveInputTerminalHandles(new Set())
 
     let disposed = false
+    // Why: load the persisted opt-outs first so defaulting logic (which can
+    // fire immediately from subscriptions) respects prior user choices.
     void loadDisabledTerminalLiveInputHandles(hostId, worktreeId).then((disabledHandles) => {
       if (disposed) {
         return
       }
+      // Why: a concurrent toggle/prune after mount but before load must win
+      // over the just-fetched persisted value for this worktree.
       const hydratedDisabledHandles = disabledLiveInputEditedDuringHydrationRef.current
         ? disabledLiveInputTerminalHandlesRef.current
         : disabledHandles
       disabledLiveInputTerminalHandlesRef.current = hydratedDisabledHandles
       disabledLiveInputHydratedRef.current = true
+      // Why: ensure the authoritative set (loaded or user-edited) is the
+      // first thing written for this worktree; earlier persists were skipped.
+      persistDisabledLiveInputHandles()
       const result = applyDisabledTerminalLiveInputHandles(
         liveInputTerminalHandlesRef.current,
         defaultedLiveInputTerminalHandlesRef.current,
