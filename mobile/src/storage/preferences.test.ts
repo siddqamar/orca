@@ -12,6 +12,7 @@ import {
   loadHostSidebarWidth,
   loadTerminalAutocompleteEnabled,
   loadTerminalLinkOpenMode,
+  readDisabledTerminalLiveInputHandlesPreference,
   saveDisabledTerminalLiveInputHandles,
   saveHostSidebarWidth,
   saveTerminalAutocompleteEnabled,
@@ -77,6 +78,9 @@ describe('terminal live input disabled handles preference', () => {
     await expect(loadDisabledTerminalLiveInputHandles('host-1', 'worktree-1')).resolves.toEqual(
       new Set()
     )
+    await expect(
+      readDisabledTerminalLiveInputHandlesPreference('host-1', 'worktree-1')
+    ).resolves.toEqual({ handles: new Set(), loaded: true })
   })
 
   it('loads only string terminal handles from storage', async () => {
@@ -99,6 +103,9 @@ describe('terminal live input disabled handles preference', () => {
     await expect(loadDisabledTerminalLiveInputHandles('host-1', 'worktree-1')).resolves.toEqual(
       new Set()
     )
+    await expect(
+      readDisabledTerminalLiveInputHandlesPreference('host-1', 'worktree-1')
+    ).resolves.toEqual({ handles: new Set(), loaded: false })
   })
 
   it('persists disabled handles per host and worktree', async () => {

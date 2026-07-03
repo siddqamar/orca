@@ -3340,11 +3340,7 @@ export default function SessionScreen() {
       clearTerminalLiveInputFocusTimer(liveInputFocusTimerRef)
       liveInputRef.current?.blur()
     }
-  }, [
-    activeHandle,
-    clearPendingLiveInputCommit,
-    toggleTerminalLiveInput
-  ])
+  }, [activeHandle, clearPendingLiveInputCommit, toggleTerminalLiveInput])
 
   const allowTerminalGestureInput = useCallback(
     (handle: string, sequenceCount: number): boolean => {

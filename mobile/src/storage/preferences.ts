@@ -75,25 +75,38 @@ export async function saveTerminalAutocompleteEnabled(enabled: boolean): Promise
 
 const TERMINAL_LIVE_INPUT_DISABLED_PREFIX = 'orca:terminalLiveInputDisabled:'
 
+export type DisabledTerminalLiveInputHandlesPreference = {
+  readonly handles: Set<string>
+  readonly loaded: boolean
+}
+
 function terminalLiveInputDisabledKey(hostId: string, worktreeId: string): string {
   return `${TERMINAL_LIVE_INPUT_DISABLED_PREFIX}${encodeURIComponent(hostId)}:${encodeURIComponent(
     worktreeId
   )}`
 }
 
+export async function readDisabledTerminalLiveInputHandlesPreference(
+  hostId: string,
+  worktreeId: string
+): Promise<DisabledTerminalLiveInputHandlesPreference> {
+  try {
+    const raw = await AsyncStorage.getItem(terminalLiveInputDisabledKey(hostId, worktreeId))
+    if (!raw) {
+      return { handles: new Set(), loaded: true }
+    }
+    return { handles: new Set(stringArray(JSON.parse(raw))), loaded: true }
+  } catch {
+    return { handles: new Set(), loaded: false }
+  }
+}
+
 export async function loadDisabledTerminalLiveInputHandles(
   hostId: string,
   worktreeId: string
 ): Promise<Set<string>> {
-  try {
-    const raw = await AsyncStorage.getItem(terminalLiveInputDisabledKey(hostId, worktreeId))
-    if (!raw) {
-      return new Set()
-    }
-    return new Set(stringArray(JSON.parse(raw)))
-  } catch {
-    return new Set()
-  }
+  const preference = await readDisabledTerminalLiveInputHandlesPreference(hostId, worktreeId)
+  return preference.handles
 }
 
 export async function saveDisabledTerminalLiveInputHandles(
