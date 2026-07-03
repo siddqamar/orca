@@ -73,6 +73,40 @@ export async function saveTerminalAutocompleteEnabled(enabled: boolean): Promise
   await AsyncStorage.setItem(AUTOCOMPLETE_KEY, String(enabled))
 }
 
+const TERMINAL_LIVE_INPUT_DISABLED_PREFIX = 'orca:terminalLiveInputDisabled:'
+
+function terminalLiveInputDisabledKey(hostId: string, worktreeId: string): string {
+  return `${TERMINAL_LIVE_INPUT_DISABLED_PREFIX}${encodeURIComponent(hostId)}:${encodeURIComponent(
+    worktreeId
+  )}`
+}
+
+export async function loadDisabledTerminalLiveInputHandles(
+  hostId: string,
+  worktreeId: string
+): Promise<Set<string>> {
+  try {
+    const raw = await AsyncStorage.getItem(terminalLiveInputDisabledKey(hostId, worktreeId))
+    if (!raw) {
+      return new Set()
+    }
+    return new Set(stringArray(JSON.parse(raw)))
+  } catch {
+    return new Set()
+  }
+}
+
+export async function saveDisabledTerminalLiveInputHandles(
+  hostId: string,
+  worktreeId: string,
+  handles: ReadonlySet<string>
+): Promise<void> {
+  await AsyncStorage.setItem(
+    terminalLiveInputDisabledKey(hostId, worktreeId),
+    JSON.stringify([...handles])
+  )
+}
+
 const SIDEBAR_WIDTH_KEY = 'orca:hostSidebarWidth'
 
 // Bounds for the draggable host worktree-list sidebar on tablet/foldable
