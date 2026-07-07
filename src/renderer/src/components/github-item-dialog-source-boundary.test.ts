@@ -192,7 +192,11 @@ describe('GitHubItemDialog source host boundaries', () => {
 
     expect(actionsSection).toContain('getSettingsForRepoRuntimeOwner(s, repoId ?? item.repoId')
     expect(actionsSection).toContain('...repoOwnerSettings')
-    expect(actionsSection).toContain('getTaskSourceRuntimeSettings(sourceContext)')
+    expect(actionsSection).toContain(
+      'const sourceRuntimeSettings = getTaskSourceRuntimeSettings(sourceContext)'
+    )
+    expect(actionsSection).toContain('sourceRuntimeSettings.activeRuntimeEnvironmentId')
+    expect(actionsSection).toContain('...sourceRuntimeSettings')
     expect(actionsSection).toContain('getActiveRuntimeTarget(sourceSettings)')
     expect(actionsSection).toContain(
       'const canMergeWithRepoContext = !!repoPath || mergeTarget.kind ==='

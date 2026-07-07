@@ -3851,16 +3851,18 @@ function PRActionsPanel({
   const repoOwnerSettings = useAppStore(
     useShallow((s) => getSettingsForRepoRuntimeOwner(s, repoId ?? item.repoId ?? null))
   )
-  const sourceSettings = useMemo(
-    () =>
-      sourceContext?.provider === 'github'
-        ? ({
-            ...repoOwnerSettings,
-            ...getTaskSourceRuntimeSettings(sourceContext)
-          } as typeof repoOwnerSettings)
-        : repoOwnerSettings,
-    [repoOwnerSettings, sourceContext]
-  )
+  const sourceSettings = useMemo(() => {
+    if (sourceContext?.provider !== 'github') {
+      return repoOwnerSettings
+    }
+    const sourceRuntimeSettings = getTaskSourceRuntimeSettings(sourceContext)
+    return sourceRuntimeSettings.activeRuntimeEnvironmentId
+      ? ({
+          ...repoOwnerSettings,
+          ...sourceRuntimeSettings
+        } as typeof repoOwnerSettings)
+      : repoOwnerSettings
+  }, [repoOwnerSettings, sourceContext])
   const mergeTarget = getActiveRuntimeTarget(sourceSettings)
   const canMutateWithRepoContext =
     !!repoPath || !!projectOrigin || mergeTarget.kind === 'environment'
