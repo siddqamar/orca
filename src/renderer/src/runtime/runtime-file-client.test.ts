@@ -567,6 +567,33 @@ describe('runtime file client', () => {
     expect(fsCancelDownloadedFile).not.toHaveBeenCalled()
   })
 
+  it('rejects older remote runtimes before opening the local save dialog', async () => {
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'chunk-1',
+      ok: false,
+      error: {
+        code: 'method_not_found',
+        message: 'Unknown method: files.readChunk'
+      },
+      _meta: { runtimeId: 'remote-runtime' }
+    })
+
+    await expect(
+      downloadRuntimeFile(
+        {
+          settings: { activeRuntimeEnvironmentId: 'env-1' },
+          worktreeId: 'wt-1',
+          worktreePath: '/remote/repo'
+        },
+        '/remote/repo/archive.zip',
+        'archive.zip'
+      )
+    ).rejects.toThrow('Remote file download requires a newer Orca server')
+
+    expect(fsStartDownloadedFile).not.toHaveBeenCalled()
+    expect(fsCancelDownloadedFile).not.toHaveBeenCalled()
+  })
+
   it('cancels the local temp download when a remote chunk fails', async () => {
     fsStartDownloadedFile.mockResolvedValue({
       canceled: false,
@@ -574,7 +601,14 @@ describe('runtime file client', () => {
       destinationPath: '/downloads/archive.zip'
     })
     fsCancelDownloadedFile.mockResolvedValue({ ok: true })
-    runtimeEnvironmentCall.mockRejectedValueOnce(new Error('connection dropped'))
+    runtimeEnvironmentCall
+      .mockResolvedValueOnce({
+        id: 'chunk-1',
+        ok: true,
+        result: { contentBase64: 'YWJj', bytesRead: 3, eof: false },
+        _meta: { runtimeId: 'remote-runtime' }
+      })
+      .mockRejectedValueOnce(new Error('connection dropped'))
 
     await expect(
       downloadRuntimeFile(

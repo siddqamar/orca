@@ -103,6 +103,8 @@ type RuntimeFileWatchEvent =
 
 const REMOTE_UPLOAD_BASE64_CHUNK_CHARS = 512 * 1024
 const REMOTE_DOWNLOAD_CHUNK_BYTES = 384 * 1024
+const REMOTE_DOWNLOAD_UPDATE_REQUIRED_MESSAGE =
+  'Remote file download requires a newer Orca server. Update the headless server and try again.'
 
 type RuntimeFileWatchListener = {
   onPayload: (payload: FsChangedPayload) => void
@@ -227,6 +229,7 @@ export async function downloadRuntimeFile(
     })
   }
 
+  const firstChunk = await readRemoteDownloadChunk(remoteArgs, 0)
   const download = await window.api.fs.startDownloadedFile({ suggestedName })
   if (download.canceled) {
     return download
@@ -235,18 +238,10 @@ export async function downloadRuntimeFile(
   let finished = false
   try {
     let offset = 0
+    let nextChunk: RuntimeFileReadChunkResult | null = firstChunk
     for (;;) {
-      const chunk = await callRuntimeRpc<RuntimeFileReadChunkResult>(
-        remoteArgs.target,
-        'files.readChunk',
-        {
-          worktree: remoteArgs.worktreeSelector,
-          relativePath: remoteArgs.relativePath,
-          offset,
-          length: REMOTE_DOWNLOAD_CHUNK_BYTES
-        },
-        { timeoutMs: 60_000 }
-      )
+      const chunk = nextChunk ?? (await readRemoteDownloadChunk(remoteArgs, offset))
+      nextChunk = null
       if (chunk.bytesRead > 0) {
         await window.api.fs.appendDownloadedFileChunk({
           transferId: download.transferId,
@@ -268,6 +263,32 @@ export async function downloadRuntimeFile(
     if (!finished) {
       await window.api.fs.cancelDownloadedFile({ transferId: download.transferId }).catch(() => {})
     }
+  }
+}
+
+async function readRemoteDownloadChunk(
+  remoteArgs: NonNullable<ReturnType<typeof getRemoteFileArgs>>,
+  offset: number
+): Promise<RuntimeFileReadChunkResult> {
+  try {
+    return await callRuntimeRpc<RuntimeFileReadChunkResult>(
+      remoteArgs.target,
+      'files.readChunk',
+      {
+        worktree: remoteArgs.worktreeSelector,
+        relativePath: remoteArgs.relativePath,
+        offset,
+        length: REMOTE_DOWNLOAD_CHUNK_BYTES
+      },
+      { timeoutMs: 60_000 }
+    )
+  } catch (error) {
+    // Why: older compatible headless servers may not have the newer chunked
+    // download RPC. Fail before opening the local save dialog in that skew.
+    if (error instanceof RuntimeRpcCallError && error.code === 'method_not_found') {
+      throw new Error(REMOTE_DOWNLOAD_UPDATE_REQUIRED_MESSAGE)
+    }
+    throw error
   }
 }
 
