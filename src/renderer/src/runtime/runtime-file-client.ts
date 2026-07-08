@@ -229,7 +229,10 @@ export async function downloadRuntimeFile(
     })
   }
 
-  const firstChunk = await readRemoteDownloadChunk(remoteArgs, 0)
+  if (!(await remoteChunkedDownloadAvailable(remoteArgs))) {
+    return downloadRemoteFileViaPreview(remoteArgs, suggestedName)
+  }
+
   const download = await window.api.fs.startDownloadedFile({ suggestedName })
   if (download.canceled) {
     return download
@@ -238,10 +241,8 @@ export async function downloadRuntimeFile(
   let finished = false
   try {
     let offset = 0
-    let nextChunk: RuntimeFileReadChunkResult | null = firstChunk
     for (;;) {
-      const chunk = nextChunk ?? (await readRemoteDownloadChunk(remoteArgs, offset))
-      nextChunk = null
+      const chunk = await readRemoteDownloadChunk(remoteArgs, offset)
       if (chunk.bytesRead > 0) {
         await window.api.fs.appendDownloadedFileChunk({
           transferId: download.transferId,
@@ -266,30 +267,75 @@ export async function downloadRuntimeFile(
   }
 }
 
+async function remoteChunkedDownloadAvailable(
+  remoteArgs: NonNullable<ReturnType<typeof getRemoteFileArgs>>
+): Promise<boolean> {
+  try {
+    await readRemoteDownloadChunk(remoteArgs, 0)
+    return true
+  } catch (error) {
+    // Why: compatible older headless servers may lack chunked downloads while
+    // still supporting preview-sized file reads that can complete the request.
+    if (error instanceof RuntimeRpcCallError && error.code === 'method_not_found') {
+      return false
+    }
+    throw error
+  }
+}
+
 async function readRemoteDownloadChunk(
   remoteArgs: NonNullable<ReturnType<typeof getRemoteFileArgs>>,
   offset: number
 ): Promise<RuntimeFileReadChunkResult> {
+  return callRuntimeRpc<RuntimeFileReadChunkResult>(
+    remoteArgs.target,
+    'files.readChunk',
+    {
+      worktree: remoteArgs.worktreeSelector,
+      relativePath: remoteArgs.relativePath,
+      offset,
+      length: REMOTE_DOWNLOAD_CHUNK_BYTES
+    },
+    { timeoutMs: 60_000 }
+  )
+}
+
+async function downloadRemoteFileViaPreview(
+  remoteArgs: NonNullable<ReturnType<typeof getRemoteFileArgs>>,
+  suggestedName: string
+): Promise<RuntimeFileDownloadResult> {
   try {
-    return await callRuntimeRpc<RuntimeFileReadChunkResult>(
+    const result = await callRuntimeRpc<RuntimeFilePreviewResult>(
       remoteArgs.target,
-      'files.readChunk',
-      {
-        worktree: remoteArgs.worktreeSelector,
-        relativePath: remoteArgs.relativePath,
-        offset,
-        length: REMOTE_DOWNLOAD_CHUNK_BYTES
-      },
-      { timeoutMs: 60_000 }
+      'files.readPreview',
+      { worktree: remoteArgs.worktreeSelector, relativePath: remoteArgs.relativePath },
+      { timeoutMs: 15_000 }
     )
+    if (result.isBinary && !result.content) {
+      throw new Error(REMOTE_DOWNLOAD_UPDATE_REQUIRED_MESSAGE)
+    }
+    return window.api.fs.saveDownloadedFile({
+      suggestedName,
+      content: result.content,
+      encoding: result.isBinary ? 'base64' : 'utf8'
+    })
   } catch (error) {
-    // Why: older compatible headless servers may not have the newer chunked
-    // download RPC. Fail before opening the local save dialog in that skew.
-    if (error instanceof RuntimeRpcCallError && error.code === 'method_not_found') {
+    if (isUnsupportedRemotePreviewDownload(error)) {
       throw new Error(REMOTE_DOWNLOAD_UPDATE_REQUIRED_MESSAGE)
     }
     throw error
   }
+}
+
+function isUnsupportedRemotePreviewDownload(error: unknown): boolean {
+  if (!(error instanceof RuntimeRpcCallError)) {
+    return false
+  }
+  return (
+    error.code === 'method_not_found' ||
+    (error.code === 'runtime_error' &&
+      (error.message === 'file_too_large' || error.message === 'binary_file'))
+  )
 }
 
 export async function readRuntimeDirectory(

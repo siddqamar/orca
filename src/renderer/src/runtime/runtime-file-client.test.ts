@@ -515,6 +515,12 @@ describe('runtime file client', () => {
     })
     runtimeEnvironmentCall
       .mockResolvedValueOnce({
+        id: 'preflight',
+        ok: true,
+        result: { contentBase64: 'YWJj', bytesRead: 3, eof: false },
+        _meta: { runtimeId: 'remote-runtime' }
+      })
+      .mockResolvedValueOnce({
         id: 'chunk-1',
         ok: true,
         result: { contentBase64: 'YWJj', bytesRead: 3, eof: false },
@@ -557,6 +563,17 @@ describe('runtime file client', () => {
       params: {
         worktree: 'id:wt-1',
         relativePath: 'archive.zip',
+        offset: 0,
+        length: 384 * 1024
+      },
+      timeoutMs: 60_000
+    })
+    expect(runtimeEnvironmentCall).toHaveBeenNthCalledWith(3, {
+      selector: 'env-1',
+      method: 'files.readChunk',
+      params: {
+        worktree: 'id:wt-1',
+        relativePath: 'archive.zip',
         offset: 3,
         length: 384 * 1024
       },
@@ -567,16 +584,72 @@ describe('runtime file client', () => {
     expect(fsCancelDownloadedFile).not.toHaveBeenCalled()
   })
 
-  it('rejects older remote runtimes before opening the local save dialog', async () => {
-    runtimeEnvironmentCall.mockResolvedValue({
-      id: 'chunk-1',
-      ok: false,
-      error: {
-        code: 'method_not_found',
-        message: 'Unknown method: files.readChunk'
-      },
-      _meta: { runtimeId: 'remote-runtime' }
+  it('falls back to preview content when older remote runtimes lack chunked download', async () => {
+    fsSaveDownloadedFile.mockResolvedValue({
+      canceled: false,
+      destinationPath: '/downloads/report.txt'
     })
+    runtimeEnvironmentCall
+      .mockResolvedValueOnce({
+        id: 'chunk-1',
+        ok: false,
+        error: {
+          code: 'method_not_found',
+          message: 'Unknown method: files.readChunk'
+        },
+        _meta: { runtimeId: 'remote-runtime' }
+      })
+      .mockResolvedValueOnce({
+        id: 'preview-1',
+        ok: true,
+        result: { content: 'hello\n', isBinary: false },
+        _meta: { runtimeId: 'remote-runtime' }
+      })
+
+    await expect(
+      downloadRuntimeFile(
+        {
+          settings: { activeRuntimeEnvironmentId: 'env-1' },
+          worktreeId: 'wt-1',
+          worktreePath: '/remote/repo'
+        },
+        '/remote/repo/report.txt',
+        'report.txt'
+      )
+    ).resolves.toEqual({ canceled: false, destinationPath: '/downloads/report.txt' })
+
+    expect(fsStartDownloadedFile).not.toHaveBeenCalled()
+    expect(fsSaveDownloadedFile).toHaveBeenCalledWith({
+      suggestedName: 'report.txt',
+      content: 'hello\n',
+      encoding: 'utf8'
+    })
+    expect(runtimeEnvironmentCall).toHaveBeenNthCalledWith(2, {
+      selector: 'env-1',
+      method: 'files.readPreview',
+      params: { worktree: 'id:wt-1', relativePath: 'report.txt' },
+      timeoutMs: 15_000
+    })
+    expect(fsCancelDownloadedFile).not.toHaveBeenCalled()
+  })
+
+  it('asks users to update older remote runtimes when preview fallback cannot download the file', async () => {
+    runtimeEnvironmentCall
+      .mockResolvedValueOnce({
+        id: 'chunk-1',
+        ok: false,
+        error: {
+          code: 'method_not_found',
+          message: 'Unknown method: files.readChunk'
+        },
+        _meta: { runtimeId: 'remote-runtime' }
+      })
+      .mockResolvedValueOnce({
+        id: 'preview-1',
+        ok: false,
+        error: { code: 'runtime_error', message: 'file_too_large' },
+        _meta: { runtimeId: 'remote-runtime' }
+      })
 
     await expect(
       downloadRuntimeFile(
@@ -591,7 +664,7 @@ describe('runtime file client', () => {
     ).rejects.toThrow('Remote file download requires a newer Orca server')
 
     expect(fsStartDownloadedFile).not.toHaveBeenCalled()
-    expect(fsCancelDownloadedFile).not.toHaveBeenCalled()
+    expect(fsSaveDownloadedFile).not.toHaveBeenCalled()
   })
 
   it('cancels the local temp download when a remote chunk fails', async () => {
@@ -602,6 +675,12 @@ describe('runtime file client', () => {
     })
     fsCancelDownloadedFile.mockResolvedValue({ ok: true })
     runtimeEnvironmentCall
+      .mockResolvedValueOnce({
+        id: 'preflight',
+        ok: true,
+        result: { contentBase64: 'YWJj', bytesRead: 3, eof: false },
+        _meta: { runtimeId: 'remote-runtime' }
+      })
       .mockResolvedValueOnce({
         id: 'chunk-1',
         ok: true,
