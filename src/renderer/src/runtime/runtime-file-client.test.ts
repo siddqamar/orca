@@ -553,7 +553,7 @@ describe('runtime file client', () => {
         worktree: 'id:wt-1',
         relativePath: 'archive.zip',
         offset: 0,
-        length: 384 * 1024
+        length: 1
       },
       timeoutMs: 60_000
     })
@@ -582,6 +582,25 @@ describe('runtime file client', () => {
     expect(fsAppendDownloadedFileChunk).toHaveBeenCalledTimes(2)
     expect(fsFinishDownloadedFile).toHaveBeenCalledWith({ transferId: 'download-1' })
     expect(fsCancelDownloadedFile).not.toHaveBeenCalled()
+  })
+
+  it('does not open the save dialog when the remote chunk probe fails for transport reasons', async () => {
+    runtimeEnvironmentCall.mockRejectedValueOnce(new Error('connection dropped'))
+
+    await expect(
+      downloadRuntimeFile(
+        {
+          settings: { activeRuntimeEnvironmentId: 'env-1' },
+          worktreeId: 'wt-1',
+          worktreePath: '/remote/repo'
+        },
+        '/remote/repo/archive.zip',
+        'archive.zip'
+      )
+    ).rejects.toThrow('connection dropped')
+
+    expect(fsStartDownloadedFile).not.toHaveBeenCalled()
+    expect(fsSaveDownloadedFile).not.toHaveBeenCalled()
   })
 
   it('falls back to preview content when older remote runtimes lack chunked download', async () => {

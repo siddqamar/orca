@@ -106,6 +106,8 @@ const REMOTE_DOWNLOAD_CHUNK_BYTES = 384 * 1024
 const REMOTE_DOWNLOAD_UPDATE_REQUIRED_MESSAGE =
   'Remote file download requires a newer Orca server. Update the headless server and try again.'
 
+type RemoteFileDownloadArgs = NonNullable<ReturnType<typeof getRemoteFileArgs>>
+
 type RuntimeFileWatchListener = {
   onPayload: (payload: FsChangedPayload) => void
   onError?: (error: Error) => void
@@ -268,10 +270,20 @@ export async function downloadRuntimeFile(
 }
 
 async function remoteChunkedDownloadAvailable(
-  remoteArgs: NonNullable<ReturnType<typeof getRemoteFileArgs>>
+  remoteArgs: RemoteFileDownloadArgs
 ): Promise<boolean> {
   try {
-    await readRemoteDownloadChunk(remoteArgs, 0)
+    await callRuntimeRpc<RuntimeFileReadChunkResult>(
+      remoteArgs.target,
+      'files.readChunk',
+      {
+        worktree: remoteArgs.worktreeSelector,
+        relativePath: remoteArgs.relativePath,
+        offset: 0,
+        length: 1
+      },
+      { timeoutMs: 60_000 }
+    )
     return true
   } catch (error) {
     // Why: compatible older headless servers may lack chunked downloads while
@@ -284,7 +296,7 @@ async function remoteChunkedDownloadAvailable(
 }
 
 async function readRemoteDownloadChunk(
-  remoteArgs: NonNullable<ReturnType<typeof getRemoteFileArgs>>,
+  remoteArgs: RemoteFileDownloadArgs,
   offset: number
 ): Promise<RuntimeFileReadChunkResult> {
   return callRuntimeRpc<RuntimeFileReadChunkResult>(
@@ -301,7 +313,7 @@ async function readRemoteDownloadChunk(
 }
 
 async function downloadRemoteFileViaPreview(
-  remoteArgs: NonNullable<ReturnType<typeof getRemoteFileArgs>>,
+  remoteArgs: RemoteFileDownloadArgs,
   suggestedName: string
 ): Promise<RuntimeFileDownloadResult> {
   try {
