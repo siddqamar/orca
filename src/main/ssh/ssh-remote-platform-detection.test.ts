@@ -47,6 +47,19 @@ describe('detectRemoteHostPlatform', () => {
     )
   })
 
+  it('detects Windows ARM64 when PowerShell emits first-use noise before the marker', async () => {
+    execCommandMock
+      .mockRejectedValueOnce(new Error('uname unavailable'))
+      .mockResolvedValueOnce('#< CLIXML\r\n<Objs></Objs>\r\nWindows ARM64\r\n')
+
+    await expect(detectRemoteHostPlatform(conn)).resolves.toMatchObject({
+      relayPlatform: 'win32-arm64',
+      os: 'win32',
+      arch: 'arm64',
+      pathFlavor: 'windows'
+    })
+  })
+
   it('returns null when neither probe yields a supported platform', async () => {
     execCommandMock.mockResolvedValueOnce('Linux').mockResolvedValueOnce('FreeBSD x86_64')
 
