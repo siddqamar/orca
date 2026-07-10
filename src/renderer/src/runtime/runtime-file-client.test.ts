@@ -652,6 +652,48 @@ describe('runtime file client', () => {
     expect(fsCancelDownloadedFile).not.toHaveBeenCalled()
   })
 
+  it('downloads a complete zero-byte recognized binary from an older remote runtime', async () => {
+    fsSaveDownloadedFile.mockResolvedValue({
+      canceled: false,
+      destinationPath: '/downloads/empty.png'
+    })
+    runtimeEnvironmentCall
+      .mockResolvedValueOnce({
+        id: 'chunk-1',
+        ok: false,
+        error: {
+          code: 'method_not_found',
+          message: 'Unknown method: files.readChunk'
+        },
+        _meta: { runtimeId: 'remote-runtime' }
+      })
+      .mockResolvedValueOnce({
+        id: 'preview-1',
+        ok: true,
+        result: { content: '', isBinary: true, isImage: true, mimeType: 'image/png' },
+        _meta: { runtimeId: 'remote-runtime' }
+      })
+
+    await expect(
+      downloadRuntimeFile(
+        {
+          settings: { activeRuntimeEnvironmentId: 'env-1' },
+          worktreeId: 'wt-1',
+          worktreePath: '/remote/repo'
+        },
+        '/remote/repo/empty.png',
+        'empty.png'
+      )
+    ).resolves.toEqual({ canceled: false, destinationPath: '/downloads/empty.png' })
+
+    expect(fsStartDownloadedFile).not.toHaveBeenCalled()
+    expect(fsSaveDownloadedFile).toHaveBeenCalledWith({
+      suggestedName: 'empty.png',
+      content: '',
+      encoding: 'base64'
+    })
+  })
+
   it('asks users to update older remote runtimes when preview fallback cannot download the file', async () => {
     runtimeEnvironmentCall
       .mockResolvedValueOnce({

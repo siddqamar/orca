@@ -323,7 +323,9 @@ async function downloadRemoteFileViaPreview(
       { worktree: remoteArgs.worktreeSelector, relativePath: remoteArgs.relativePath },
       { timeoutMs: 15_000 }
     )
-    if (result.isBinary && !result.content) {
+    // Why: old servers use an empty, metadata-free binary result to signal an
+    // unsupported binary; recognized zero-byte previews are still complete.
+    if (result.isBinary && !result.content && !result.isImage && !result.mimeType) {
       throw new Error(REMOTE_DOWNLOAD_UPDATE_REQUIRED_MESSAGE)
     }
     return window.api.fs.saveDownloadedFile({
