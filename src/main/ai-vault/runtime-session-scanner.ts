@@ -74,7 +74,17 @@ const aiVaultListResultSchema = z.object({
       // fields) parseable; they simply report no recoverable-empty sessions.
       queuedMessageCount: z.number().default(0),
       subagentTranscriptCount: z.number().default(0),
-      resumeCommand: z.string()
+      resumeCommand: z.string(),
+      // The default keeps remote hosts running an older build (no subagent
+      // field) parseable; scanned top-level sessions carry null anyway.
+      subagent: z
+        .object({
+          parentSessionId: z.string(),
+          agentType: z.string().nullable(),
+          status: z.enum(['running', 'completed', 'failed', 'stopped']).nullable()
+        })
+        .nullable()
+        .default(null)
     })
   ),
   issues: z.array(

@@ -1202,6 +1202,10 @@ function createAiVaultApi(): NonNullable<Partial<PreloadApi>['aiVault']> {
         executionHostId
       })
     },
+    // Why: the runtime RPC surface only exposes aiVault.listSessions; subagent
+    // transcript listing has no server-side method yet, so the browser client
+    // reports an empty (not erroring) result.
+    listSubagentSessions: () => Promise.resolve({ sessions: [], issues: [] }),
     onWindowFocused: () => noopUnsubscribe
   }
 }
