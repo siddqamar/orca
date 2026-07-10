@@ -52,6 +52,7 @@ import {
 import { registerSshGitProvider, unregisterSshGitProvider } from '../providers/ssh-git-dispatch'
 import { notifyRemoteWorkspaceHandlers } from '../ipc/remote-workspace-events'
 import { PortScanner } from './ssh-port-scanner'
+import { isMainWindowVisible, onMainWindowBecameVisible } from '../window/main-window-visibility'
 import type { SshPortForwardManager } from './ssh-port-forward'
 import type { SshConnection } from './ssh-connection'
 import { joinRemotePath, isWindowsRemoteHost, type RemoteHostPlatform } from './ssh-remote-platform'
@@ -69,6 +70,7 @@ import { runRemoteOrcaCli } from './ssh-remote-orca-cli'
 import { toSshExecutionHostId, type ExecutionHostId } from '../../shared/execution-host'
 import { isTerminalLeafId, makePaneKey } from '../../shared/stable-pane-id'
 import { isValidTerminalTabId } from '../../shared/terminal-tab-id'
+import { shellEscape } from './ssh-connection-utils'
 
 export type RelaySessionState = 'idle' | 'deploying' | 'ready' | 'reconnecting' | 'disposed'
 
@@ -83,6 +85,69 @@ type RemoteCliBridgeEnv = {
 }
 
 type ExpectedPtyIdentity = { paneKey?: string; tabId?: string }
+
+const REMOTE_GROK_HOME_MAX_LENGTH = 4096
+const REMOTE_GROK_HOME_PROBE_TIMEOUT_MS = 8_000
+
+function defaultRemoteGrokHome(remoteHome: string): string {
+  const home = remoteHome.replace(/\/+$/, '') || remoteHome
+  return `${home}/.grok`
+}
+
+function normalizeRemoteGrokHome(candidate: string): string | null {
+  if (
+    candidate.length === 0 ||
+    candidate.length > REMOTE_GROK_HOME_MAX_LENGTH ||
+    candidate !== candidate.trim() ||
+    !candidate.startsWith('/') ||
+    candidate.includes('\\') ||
+    hasControlCharacter(candidate)
+  ) {
+    return null
+  }
+  return candidate.replace(/\/+$/, '') || '/'
+}
+
+function hasControlCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.charCodeAt(0)
+    return code <= 0x1f || code === 0x7f
+  })
+}
+
+function loginShellCommand(shell: string, command: string): string {
+  const shellName = shell.split('/').at(-1)
+  const mode = shellName === 'sh' || shellName === 'dash' ? '-c' : '-lc'
+  return `${shellEscape(shell)} ${mode} ${shellEscape(command)}`
+}
+
+async function resolveRemoteGrokHome(
+  connection: SshConnection,
+  remoteHome: string
+): Promise<string> {
+  const fallback = defaultRemoteGrokHome(remoteHome)
+  try {
+    // Why: remote PTYs start login shells, so probe the same profile-derived
+    // environment instead of the relay service or local Electron environment.
+    const shellOutput = await execCommand(connection, "printenv SHELL || printf '/bin/sh\\n'", {
+      timeoutMs: REMOTE_GROK_HOME_PROBE_TIMEOUT_MS
+    })
+    const shell = shellOutput.trim().split(/\r?\n/, 1)[0]
+    if (!shell?.startsWith('/') || hasControlCharacter(shell)) {
+      return fallback
+    }
+    // Why: this runs inside the user's actual login shell, which may be fish or
+    // tcsh. External commands avoid shell-specific variable/conditional syntax.
+    const probe = `printenv GROK_HOME | head -c ${REMOTE_GROK_HOME_MAX_LENGTH + 1}`
+    const output = await execCommand(connection, loginShellCommand(shell, probe), {
+      wrapCommand: false,
+      timeoutMs: REMOTE_GROK_HOME_PROBE_TIMEOUT_MS
+    })
+    return normalizeRemoteGrokHome(output.split(/\r?\n/, 1)[0] ?? '') ?? fallback
+  } catch {
+    return fallback
+  }
+}
 
 function expectedIdentityForLease(lease: {
   tabId?: string
@@ -672,8 +737,10 @@ export class SshRelaySession {
 
     let sftp: Awaited<ReturnType<SshConnection['sftp']>> | null = null
     try {
-      sftp = await this.requireReadyConnection().sftp()
-      await installRemoteManagedAgentHooks(sftp, remoteHome)
+      const connection = this.requireReadyConnection()
+      const remoteGrokHome = await resolveRemoteGrokHome(connection, remoteHome)
+      sftp = await connection.sftp()
+      await installRemoteManagedAgentHooks(sftp, remoteHome, { grokHomeDir: remoteGrokHome })
     } catch (error) {
       console.warn(
         `[ssh-relay-session] remote managed hook install failed for ${this.targetId}: ${
@@ -982,7 +1049,13 @@ export class SshRelaySession {
     if (!this.mux || this.isDisposed()) {
       return
     }
-    const scanner = new PortScanner()
+    // Why: each scan walks /proc/*/fd on the remote host, so the scanner skips
+    // ticks entirely while no window can show the results (hidden to tray or
+    // minimized overnight) and rescans immediately when the window returns.
+    const scanner = new PortScanner({
+      isWindowVisible: () => isMainWindowVisible(this.getMainWindow()),
+      onWindowBecameVisible: onMainWindowBecameVisible
+    })
     this.portScanner = scanner
     // Why: capture the scanner instance so that a late ports.detect callback
     // from a previous relay session (before reconnect replaced it) is silently

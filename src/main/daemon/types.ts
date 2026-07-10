@@ -3,13 +3,11 @@ import type { TerminalOscLinkRange } from '../../shared/terminal-osc-link-ranges
 // ─── Protocol Version ────────────────────────────────────────────────
 import type { StartupCommandDelivery } from '../../shared/codex-startup-delivery'
 
-// Why: daemons can survive app updates. Bump for IPC wire-shape changes, or
-// when daemon-baked behavior cannot be delivered by on-disk wrapper refresh.
-// Why: bump when adding daemon wire behavior so same-version old daemons do
-// not silently accept the handshake and then reject new RPCs.
-export const PROTOCOL_VERSION = 18
+// Why: daemons survive app updates; bump for IPC shape or baked behavior that
+// wrapper refresh cannot deliver, so old daemons reject unsupported RPCs.
+export const PROTOCOL_VERSION = 19
 export const PREVIOUS_DAEMON_PROTOCOL_VERSIONS = [
-  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
 ] as const
 
 // ─── Session State Machine ──────────────────────────────────────────
@@ -25,6 +23,12 @@ export type TerminalSnapshot = {
   scrollbackAnsi: string
   oscLinks?: TerminalOscLinkRange[]
   rehydrateSequences: string
+  /** The trailing partial escape sequence left unparsed in the emulator when a
+   *  PTY read ended mid-escape. serialize() cannot carry it (it lives in the
+   *  parser, not the buffer), so the restorer must write it LAST — after any
+   *  post-snapshot reset — so the next live chunk's continuation completes the
+   *  sequence instead of rendering literally (#7329). */
+  pendingEscapeTailAnsi?: string
   cwd: string | null
   modes: TerminalModes
   cols: number
@@ -41,6 +45,10 @@ export type TerminalModes = {
   sgrMousePixelsMode?: boolean
   applicationCursor: boolean
   alternateScreen: boolean
+  /** Kitty keyboard protocol flags (CSI > u) the session's TUI negotiated;
+   *  0/absent when inactive. SerializeAddon cannot capture these, so the
+   *  emulator mirrors them for snapshot rehydration. */
+  kittyKeyboardFlags?: number
 }
 
 // The on-disk checkpoint.json shape lives in daemon-checkpoint-file.ts (it
@@ -94,6 +102,8 @@ export type CreateOrAttachRequest = {
     terminalWindowsPowerShellImplementation?: 'auto' | 'powershell.exe' | 'pwsh.exe'
     shellReadySupported?: boolean
     shellReadyTimeoutMs?: number
+    /** Recovered ANSI applied before the new subprocess can emit startup output. */
+    historySeed?: string
   }
 }
 
@@ -303,6 +313,7 @@ export type CreateOrAttachResult = {
   snapshot: TerminalSnapshot | null
   pid: number | null
   shellState: ShellReadyState
+  historySeeded?: boolean
 }
 
 export type GetSnapshotResult = {

@@ -174,6 +174,11 @@ export function ensurePtyDispatcher(): void {
       }
     }
   })
+  // Why: tell main the pty:data listener is live now. Before this fires (fresh
+  // load or post-reload boot window) main holds all sends — bytes sent into a
+  // listener-less page are silently dropped yet counted in-flight, which
+  // permanently pins the delivery gate. Fires once per page load.
+  window.api.pty.rendererDispatcherReady?.()
 }
 
 export function subscribeToPtyExit(ptyId: string, watcher: (code: number) => void): () => void {
@@ -246,8 +251,12 @@ export function registerEagerPtyBuffer(
   const exitHandler = (code: number): void => {
     // Shell died before TerminalPane attached — clean up and notify the store
     // so the tab's ptyId is cleared and connectPanePty falls through to connect().
-    ptyDataHandlers.delete(ptyId)
-    ptyReplayHandlers.delete(ptyId)
+    // Identity-guarded like dispose(): never delete a handler a transport has
+    // since registered for this id.
+    if (ptyDataHandlers.get(ptyId) === dataHandler) {
+      ptyDataHandlers.delete(ptyId)
+      ptyReplayHandlers.delete(ptyId)
+    }
     ptyExitHandlers.delete(ptyId)
     eagerPtyHandles.delete(ptyId)
     onExit(ptyId, code)

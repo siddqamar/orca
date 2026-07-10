@@ -3,6 +3,8 @@ import { Terminal } from '@xterm/headless'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { activateOrcaTerminalUnicodeProvider } from '../../shared/terminal-unicode-provider'
+import { advancePartialEscapeTail } from '../../shared/terminal-partial-escape-tail'
+import { TerminalKittyKeyboardModeTracker } from '../../shared/terminal-kitty-keyboard-mode-tracker'
 import { extractLastOscTitle } from '../../shared/agent-detection'
 import { collectHeadlessOscLinkRanges } from './headless-osc-link-ranges'
 import { extractOscScanTail, scanOsc7Uris } from './osc7-uri-extraction'
@@ -35,7 +37,15 @@ export class HeadlessEmulator {
   private lastTitle: string | null = null
   private oscScanTail = ''
   private privateModes = new TerminalPrivateModeTracker()
+  private kittyKeyboardModes = new TerminalKittyKeyboardModeTracker()
   private restoredOscLinks: TerminalOscLinkRange[] = []
+  // Why: a PTY read can end mid-escape-sequence — those bytes live in xterm's
+  // parser, not the screen buffer, so serialize() drops them and the next
+  // chunk's continuation renders literally after a remote snapshot restore
+  // (#7329). Track the unparsed trailing partial at ingest (committed after
+  // xterm parses the same bytes, like the private-mode mirror) and ship it in
+  // the snapshot so the restorer can complete the sequence.
+  private partialEscapeTail = ''
   private disposed = false
   private readonly pathFlavor?: 'posix' | 'win32'
   private readonly remotePosixFileUriAuthority: boolean
@@ -89,6 +99,8 @@ export class HeadlessEmulator {
         // Why: snapshots combine serialized xterm state with mirrored mouse
         // modes. Commit the mirror only after xterm has parsed the same bytes.
         this.privateModes.scan(data)
+        this.kittyKeyboardModes.scan(data)
+        this.partialEscapeTail = advancePartialEscapeTail(this.partialEscapeTail, data)
         resolve()
       })
     })
@@ -115,6 +127,8 @@ export class HeadlessEmulator {
     // PTY bursts; queued headless writes can snapshot half-cleared TUI rows.
     writeSync.call((this.terminal as TerminalWithSynchronousWrite)._core, data)
     this.privateModes.scan(data)
+    this.kittyKeyboardModes.scan(data)
+    this.partialEscapeTail = advancePartialEscapeTail(this.partialEscapeTail, data)
     return true
   }
 
@@ -164,7 +178,13 @@ export class HeadlessEmulator {
       cols: this.terminal.cols,
       rows: this.terminal.rows,
       scrollbackLines: this.terminal.buffer.normal.length - this.terminal.rows,
-      lastTitle: this.lastTitle ?? undefined
+      lastTitle: this.lastTitle ?? undefined,
+      // Why: written LAST by the restorer (after any reset) so the next live
+      // chunk completes this dangling sequence instead of rendering it literally
+      // (#7329). Its bytes are already counted by the snapshot seq.
+      ...(this.partialEscapeTail.length > 0
+        ? { pendingEscapeTailAnsi: this.partialEscapeTail }
+        : {})
     }
   }
 
@@ -270,7 +290,8 @@ export class HeadlessEmulator {
       sgrMousePixelsMode: this.privateModes.sgrMousePixelsMode,
       applicationCursor:
         buffer.type === 'normal' ? this.terminal.modes.applicationCursorKeysMode : false,
-      alternateScreen: buffer.type === 'alternate'
+      alternateScreen: buffer.type === 'alternate',
+      kittyKeyboardFlags: this.kittyKeyboardModes.flags
     }
   }
 
@@ -309,6 +330,15 @@ export class HeadlessEmulator {
       seqs.push('\x1b[?1016h')
     } else if (modes.sgrMouseMode) {
       seqs.push('\x1b[?1006h')
+    }
+    // Why: kitty keyboard flags are per-screen state SerializeAddon cannot
+    // capture; without re-arming them, the still-running TUI keeps expecting
+    // protocol-encoded keys the restored client no longer sends. `=` (set)
+    // instead of `>` (push) so repeated replays cannot grow the flag stack.
+    // Emitted after the alt-screen switch above so the flags land on the
+    // screen the TUI negotiated them on.
+    if (modes.kittyKeyboardFlags && modes.kittyKeyboardFlags > 0) {
+      seqs.push(`\x1b[=${modes.kittyKeyboardFlags};1u`)
     }
     return seqs.join('')
   }

@@ -3733,7 +3733,8 @@ describe('registerWorktreeHandlers', () => {
       '/remote/repo',
       'origin',
       'master',
-      'refs/remotes/origin/master'
+      'refs/remotes/origin/master',
+      { skipAutoMaintenance: true }
     )
   })
 
@@ -3800,7 +3801,8 @@ describe('registerWorktreeHandlers', () => {
       '/remote/repo',
       'origin',
       'main',
-      'refs/remotes/origin/main'
+      'refs/remotes/origin/main',
+      { skipAutoMaintenance: true }
     )
     expect(provider.addWorktree).toHaveBeenCalledWith(
       '/remote/repo',
@@ -4032,7 +4034,8 @@ describe('registerWorktreeHandlers', () => {
       '/remote/repo',
       'origin',
       'main',
-      'refs/remotes/origin/main'
+      'refs/remotes/origin/main',
+      { skipAutoMaintenance: true }
     )
     expect(provider.addWorktree).toHaveBeenCalledTimes(2)
   })
@@ -7945,5 +7948,81 @@ describe('registerWorktreeHandlers', () => {
     expect(addWorktreeMock).not.toHaveBeenCalled()
     expect(store.setWorktreeMeta).not.toHaveBeenCalled()
     expect(createSetupRunnerScriptMock).not.toHaveBeenCalled()
+  })
+
+  describe('worktrees:forgetLocal', () => {
+    it('forgets a workspace pinned to a removed SSH target without touching the provider', async () => {
+      const repo = {
+        id: 'repo-1',
+        path: '/workspace/repo',
+        displayName: 'repo',
+        badgeColor: '#000',
+        addedAt: 0,
+        connectionId: 'ssh-dead',
+        worktreeBaseRef: null
+      }
+      const ptyProvider = {} as never
+      const worktreeId = 'repo-1::/workspace/feature-wt'
+      store.getRepo.mockReturnValue(repo)
+      getLocalPtyProviderMock.mockReturnValue(ptyProvider)
+      // Why: a removed/disconnected SSH target has no live provider; forgetLocal
+      // must not reach for one.
+      getSshGitProviderMock.mockReturnValue(undefined)
+
+      const result = await handlers['worktrees:forgetLocal'](null, { worktreeId })
+
+      expect(result).toEqual({})
+      expect(killAllProcessesForWorktreeMock).toHaveBeenCalledWith(worktreeId, {
+        runtime: runtimeStub,
+        localProvider: ptyProvider,
+        onPtyStopped: clearProviderPtyStateMock
+      })
+      expect(runtimeStub.clearOptimisticReconcileToken).toHaveBeenCalledWith(worktreeId)
+      expect(store.removeWorktreeMeta).toHaveBeenCalledWith(worktreeId)
+      expect(advertisedUrlWatcherForgetWorktreeMock).toHaveBeenCalledWith(worktreeId)
+      expect(deleteWorktreeHistoryDirMock).toHaveBeenCalledWith(worktreeId)
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith('worktrees:changed', {
+        repoId: 'repo-1'
+      })
+      // The whole point: local-only cleanup never dispatches to the SSH provider.
+      expect(getSshGitProviderMock).not.toHaveBeenCalled()
+      expect(getSshFilesystemProviderMock).not.toHaveBeenCalled()
+      expect(listWorktreesMock).not.toHaveBeenCalled()
+      expect(removeWorktreeMock).not.toHaveBeenCalled()
+    })
+
+    it('throws when the repo is missing', async () => {
+      store.getRepo.mockReturnValue(undefined)
+
+      await expect(
+        handlers['worktrees:forgetLocal'](null, {
+          worktreeId: 'repo-gone::/workspace/feature-wt'
+        })
+      ).rejects.toThrow(/Repo not found/)
+
+      expect(store.removeWorktreeMeta).not.toHaveBeenCalled()
+      expect(getSshGitProviderMock).not.toHaveBeenCalled()
+    })
+
+    it('rejects forgetting a folder project root', async () => {
+      const repo = {
+        id: 'repo-folder',
+        path: '/workspace/folder',
+        displayName: 'folder',
+        badgeColor: '#000',
+        addedAt: 0,
+        kind: 'folder' as const
+      }
+      store.getRepo.mockReturnValue(repo)
+
+      await expect(
+        handlers['worktrees:forgetLocal'](null, {
+          worktreeId: `${repo.id}::${repo.path}`
+        })
+      ).rejects.toThrow(/project root workspace/)
+
+      expect(store.removeWorktreeMeta).not.toHaveBeenCalled()
+      expect(deleteWorktreeHistoryDirMock).not.toHaveBeenCalled()
+    })
   })
 })
