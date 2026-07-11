@@ -197,6 +197,21 @@ export class TerminalHost {
     this.getAliveSession(sessionId).resize(cols, rows)
   }
 
+  // Why null-not-throw (unlike write/resize): pause/resume are best-effort
+  // flow-control hints; a session that exited while the notify was in flight
+  // must not surface an error or a synthetic exit.
+  pauseProducer(sessionId: string): void {
+    const session = this.sessions.get(sessionId)
+    if (!session || !session.isAlive) {
+      return
+    }
+    session.pauseProducer()
+  }
+
+  resumeProducer(sessionId: string): void {
+    this.sessions.get(sessionId)?.resumeProducer()
+  }
+
   kill(sessionId: string, opts: { immediate?: boolean } = {}): void {
     const session = this.getAliveSession(sessionId)
     this.recordTombstone(sessionId)
@@ -266,12 +281,22 @@ export class TerminalHost {
   // Why: unlike getAliveSession (which throws), this returns null for dead/missing
   // sessions. Checkpoint is best-effort — a session that exited between the timer
   // firing and the RPC arriving should not throw.
-  getSnapshot(sessionId: string): TerminalSnapshot | null {
+  getSnapshot(sessionId: string, opts: { scrollbackRows?: number } = {}): TerminalSnapshot | null {
     const session = this.sessions.get(sessionId)
     if (!session || !session.isAlive) {
       return null
     }
-    return session.getSnapshot()
+    return session.getSnapshot(opts)
+  }
+
+  // Why: scan-authority handoff seed (null-not-throw like getSnapshot) — the
+  // emulator's dangling incomplete escape at the current stream position.
+  getPartialEscapeTailAnsi(sessionId: string): string {
+    const session = this.sessions.get(sessionId)
+    if (!session || !session.isAlive) {
+      return ''
+    }
+    return session.getPartialEscapeTailAnsi()
   }
 
   // Why: read-only readback of the size the PTY actually applied (null-not-throw
