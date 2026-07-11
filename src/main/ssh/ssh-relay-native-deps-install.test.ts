@@ -156,7 +156,7 @@ function makeExecResponses(opts: {
   // build toolchain — no chmod/probe/launch slots are reached.
   if (opts.npmInstall !== 'ok') {
     return [
-      'Linux x86_64',
+      '__ORCA_REMOTE_PLATFORM__ Linux x86_64',
       '/home/u',
       '', // mkdir remoteDir (uploadRelay)
       '', // chmod +x node
@@ -175,7 +175,7 @@ function makeExecResponses(opts: {
             ? { reject: 'cd: no such file or directory' }
             : opts.probe
   const slots: ExecResponse[] = [
-    'Linux x86_64',
+    '__ORCA_REMOTE_PLATFORM__ Linux x86_64',
     '/home/u',
     '', // mkdir remoteDir (uploadRelay)
     '', // chmod +x node
@@ -534,7 +534,7 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
     vi.mocked(resolveRemoteNodePath).mockResolvedValueOnce('C:/Program Files/nodejs/node.exe')
     const conn = makeMockConnection(sftpCapture)
     feed([
-      'Windows AMD64',
+      '__ORCA_REMOTE_PLATFORM__ Windows AMD64',
       'C:\\Users\\u',
       '', // mkdir remoteDir
       '', // npm install native deps
@@ -609,7 +609,7 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
     vi.mocked(isRelayAlreadyInstalled).mockResolvedValue(true)
     const conn = makeMockConnection(sftpCapture)
     feed([
-      'Linux x86_64',
+      '__ORCA_REMOTE_PLATFORM__ Linux x86_64',
       '/home/u',
       'MISSING', // first native-deps probe before lock
       'MISSING', // re-probe after lock
@@ -636,7 +636,13 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
   it('does not mutate an existing relay dir when required native deps are present', async () => {
     vi.mocked(isRelayAlreadyInstalled).mockResolvedValue(true)
     const conn = makeMockConnection(sftpCapture)
-    feed(['Linux x86_64', '/home/u', 'ORCA-NATIVE-DEPS-OK', 'DEAD', 'READY'])
+    feed([
+      '__ORCA_REMOTE_PLATFORM__ Linux x86_64',
+      '/home/u',
+      'ORCA-NATIVE-DEPS-OK',
+      'DEAD',
+      'READY'
+    ])
 
     await deployAndLaunchRelay(conn)
 
