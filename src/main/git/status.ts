@@ -19,6 +19,7 @@ import type {
 import type { CommitMessageDraftContext } from '../../shared/commit-message-generation'
 import {
   getEffectiveGitUpstreamStatus,
+  getGitUpstreamStatusForUpstreamName,
   splitRemoteBranchName
 } from '../../shared/git-effective-upstream'
 import { createGitConfigSnapshotRunner } from '../../shared/git-config-snapshot-runner'
@@ -66,6 +67,21 @@ const SUBMODULE_PATHS_CACHE_TTL_MS = 5_000
 type SubmodulePathsCacheEntry = { paths: string[]; expiresAt: number }
 const submodulePathsCache = new Map<string, SubmodulePathsCacheEntry>()
 
+// Why: the effective-upstream resolution chain (symbolic-ref + rev-parse ×2-3
+// + config snapshot) costs 4-5 subprocess spawns and only changes when branch
+// or git config changes. Ahead/behind is a pure function of the two rev-list
+// endpoints, so a recently-resolved name can be revalidated with one rev-list
+// spawn per poll tick; a failed rev-list (deleted ref) falls back to a full
+// re-resolve. Issue #7576: this path dominated idle main-process spawn churn.
+const RESOLVED_UPSTREAM_NAME_CACHE_TTL_MS = 60_000
+
+type ResolvedUpstreamNameCacheEntry = {
+  upstreamName: string
+  expiresAt: number
+}
+
+const resolvedUpstreamNameCache = new Map<string, ResolvedUpstreamNameCacheEntry>()
+
 const effectiveUpstreamStatusCache = new Map<string, EffectiveUpstreamStatusCacheEntry>()
 const effectiveUpstreamStatusInFlight = new Map<string, Promise<GitUpstreamStatus>>()
 const retiredEffectiveUpstreamStatusInFlight = new Map<string, Promise<GitUpstreamStatus>>()
@@ -80,6 +96,7 @@ function clearGitReadInvalidationState(): void {
   gitDiffReadDedupe.clear()
   statusReadsInFlight.clear()
   submodulePathsCache.clear()
+  resolvedUpstreamNameCache.clear()
 }
 
 export function clearSubmodulePathsCacheForTests(): void {
@@ -508,6 +525,7 @@ export function clearEffectiveUpstreamNegativeStatusCache(identity: {
   retireEffectiveUpstreamStatusProbe(cacheKey)
   effectiveUpstreamStatusCache.delete(cacheKey)
   effectiveUpstreamStatusInFlight.delete(cacheKey)
+  resolvedUpstreamNameCache.delete(cacheKey)
   effectiveUpstreamStatusWriteGeneration.set(
     cacheKey,
     (effectiveUpstreamStatusWriteGeneration.get(cacheKey) ?? 0) + 1
@@ -626,7 +644,13 @@ async function readOrProbeEffectiveUpstreamStatus(
   // Why: source-control mount and root git refresh can overlap during startup.
   // Coalesce the richer upstream probe so a stable missing ref fails once.
   const writeGeneration = effectiveUpstreamStatusWriteGeneration.get(cacheKey) ?? 0
-  const probe = probeEffectiveUpstreamStatus(worktreePath, branchName, options).then((result) => {
+  const probe = probeOrRevalidateEffectiveUpstreamStatus(
+    cacheKey,
+    worktreePath,
+    branchName,
+    options,
+    bypassCache
+  ).then((result) => {
     rememberEffectiveUpstreamStatus(
       cacheKey,
       result.status,
@@ -647,6 +671,46 @@ async function readOrProbeEffectiveUpstreamStatus(
       trimEffectiveUpstreamStatusGeneration()
     }
   }
+}
+
+async function probeOrRevalidateEffectiveUpstreamStatus(
+  cacheKey: string,
+  worktreePath: string,
+  branchName: string,
+  options: GitRuntimeOptions = {},
+  bypassCache = false
+): Promise<{ status: GitUpstreamStatus; probedSameNameOriginRef: boolean }> {
+  const now = Date.now()
+  const cached = resolvedUpstreamNameCache.get(cacheKey)
+  if (cached && (bypassCache || cached.expiresAt <= now)) {
+    resolvedUpstreamNameCache.delete(cacheKey)
+  } else if (cached) {
+    try {
+      const status = await getGitUpstreamStatusForUpstreamName(
+        (args) => gitExecFileAsync(args, gitOptionsForWorktree(worktreePath, options)),
+        cached.upstreamName
+      )
+      return { status, probedSameNameOriginRef: false }
+    } catch {
+      // Ref deleted or repo state changed — fall through to a full re-resolve.
+      resolvedUpstreamNameCache.delete(cacheKey)
+    }
+  }
+  const result = await probeEffectiveUpstreamStatus(worktreePath, branchName, options)
+  if (result.status.hasUpstream && result.status.upstreamName) {
+    resolvedUpstreamNameCache.set(cacheKey, {
+      upstreamName: result.status.upstreamName,
+      expiresAt: Date.now() + RESOLVED_UPSTREAM_NAME_CACHE_TTL_MS
+    })
+    while (resolvedUpstreamNameCache.size > MAX_EFFECTIVE_UPSTREAM_NEGATIVE_CACHE_ENTRIES) {
+      const oldest = resolvedUpstreamNameCache.keys().next()
+      if (oldest.done) {
+        break
+      }
+      resolvedUpstreamNameCache.delete(oldest.value)
+    }
+  }
+  return result
 }
 
 async function probeEffectiveUpstreamStatus(
@@ -1773,7 +1837,7 @@ export async function stageFile(
   clearGitReadInvalidationState()
   try {
     await gitExecFileAsync(
-      ['add', '--', literalPathspec(filePath)],
+      ['add', '--', literalPathspec(filePath, options)],
       gitOptionsForWorktree(worktreePath, options)
     )
   } finally {
@@ -1791,7 +1855,7 @@ export async function unstageFile(
 ): Promise<void> {
   clearGitReadInvalidationState()
   try {
-    await gitExecFileAsync(['restore', '--staged', '--', literalPathspec(filePath)], {
+    await gitExecFileAsync(['restore', '--staged', '--', literalPathspec(filePath, options)], {
       ...gitOptionsForWorktree(worktreePath, options)
     })
   } finally {
@@ -1897,9 +1961,12 @@ export async function discardChanges(
 
     let tracked = false
     try {
-      await gitExecFileAsync(['ls-files', '--error-unmatch', '--', literalPathspec(filePath)], {
-        ...gitOptionsForWorktree(worktreePath, options)
-      })
+      await gitExecFileAsync(
+        ['ls-files', '--error-unmatch', '--', literalPathspec(filePath, options)],
+        {
+          ...gitOptionsForWorktree(worktreePath, options)
+        }
+      )
       tracked = true
     } catch {
       // File is not tracked by git
@@ -1907,7 +1974,7 @@ export async function discardChanges(
 
     if (tracked) {
       await gitExecFileAsync(
-        ['restore', '--worktree', '--source=HEAD', '--', literalPathspec(filePath)],
+        ['restore', '--worktree', '--source=HEAD', '--', literalPathspec(filePath, options)],
         {
           ...gitOptionsForWorktree(worktreePath, options)
         }
@@ -1927,9 +1994,11 @@ function normalizeGitPathForCompare(filePath: string): string {
   return filePath.replace(/\\/g, '/').replace(/\/+$/, '')
 }
 
-function literalPathspec(filePath: string): string {
-  // Why: source-control selections are concrete paths, not user-authored Git globs.
-  return `:(literal)${filePath}`
+function literalPathspec(filePath: string, options: GitRuntimeOptions): string {
+  // Why: Windows validation produces backslashes, but Git running inside WSL
+  // needs POSIX paths. Host paths stay untouched so POSIX filenames remain literal.
+  const runtimePath = options.wslDistro ? filePath.replace(/\\/g, '/') : filePath
+  return `:(literal)${runtimePath}`
 }
 
 function isTrackedPathSpec(filePath: string, trackedPaths: readonly string[]): boolean {
@@ -1949,7 +2018,7 @@ async function listTrackedPathSpecs(
   for (let i = 0; i < filePaths.length; i += BULK_CHUNK_SIZE) {
     const chunk = filePaths.slice(i, i + BULK_CHUNK_SIZE)
     const { stdout } = await gitExecFileAsync(
-      ['ls-files', '-z', '--', ...chunk.map(literalPathspec)],
+      ['ls-files', '-z', '--', ...chunk.map((filePath) => literalPathspec(filePath, options))],
       {
         ...gitOptionsForWorktree(worktreePath, options)
       }
@@ -1974,9 +2043,12 @@ async function cleanUntrackedPaths(
     const chunk = filePaths.slice(i, i + BULK_CHUNK_SIZE)
     if (chunk.length > 0) {
       // Why: Git pathspec cleanup avoids raw recursive deletion through symlinked parents.
-      await gitExecFileAsync(['clean', '-ffdx', '--', ...chunk.map(literalPathspec)], {
-        ...gitOptionsForWorktree(worktreePath, options)
-      })
+      await gitExecFileAsync(
+        ['clean', '-ffdx', '--', ...chunk.map((filePath) => literalPathspec(filePath, options))],
+        {
+          ...gitOptionsForWorktree(worktreePath, options)
+        }
+      )
     }
   }
 }
@@ -2018,7 +2090,13 @@ export async function bulkDiscardChanges(
         for (let i = 0; i < trackedPaths.length; i += BULK_CHUNK_SIZE) {
           const chunk = trackedPaths.slice(i, i + BULK_CHUNK_SIZE)
           await gitExecFileAsync(
-            ['restore', '--worktree', '--source=HEAD', '--', ...chunk.map(literalPathspec)],
+            [
+              'restore',
+              '--worktree',
+              '--source=HEAD',
+              '--',
+              ...chunk.map((filePath) => literalPathspec(filePath, options))
+            ],
             {
               ...gitOptionsForWorktree(worktreePath, options)
             }
@@ -2061,7 +2139,7 @@ export async function bulkStageFiles(
     for (let i = 0; i < filePaths.length; i += BULK_CHUNK_SIZE) {
       const chunk = filePaths.slice(i, i + BULK_CHUNK_SIZE)
       await gitExecFileAsync(
-        ['add', '--', ...chunk.map(literalPathspec)],
+        ['add', '--', ...chunk.map((filePath) => literalPathspec(filePath, options))],
         gitOptionsForWorktree(worktreePath, options)
       )
     }
@@ -2085,9 +2163,17 @@ export async function bulkUnstageFiles(
   try {
     for (let i = 0; i < filePaths.length; i += BULK_CHUNK_SIZE) {
       const chunk = filePaths.slice(i, i + BULK_CHUNK_SIZE)
-      await gitExecFileAsync(['restore', '--staged', '--', ...chunk.map(literalPathspec)], {
-        ...gitOptionsForWorktree(worktreePath, options)
-      })
+      await gitExecFileAsync(
+        [
+          'restore',
+          '--staged',
+          '--',
+          ...chunk.map((filePath) => literalPathspec(filePath, options))
+        ],
+        {
+          ...gitOptionsForWorktree(worktreePath, options)
+        }
+      )
     }
   } finally {
     clearGitReadInvalidationState()

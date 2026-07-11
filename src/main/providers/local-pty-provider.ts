@@ -21,7 +21,7 @@ import {
   updateHistFileForFallback,
   logHistoryInjection
 } from '../terminal-history'
-import type { IPtyProvider, PtySpawnOptions, PtySpawnResult } from './types'
+import type { IPtyProvider, PtyProcessInfo, PtySpawnOptions, PtySpawnResult } from './types'
 import {
   ensureNodePtySpawnHelperExecutable,
   validateWorkingDirectory,
@@ -51,10 +51,12 @@ import {
   resolveWindowsGitBashShellPath
 } from '../git-bash'
 import { WINDOWS_GIT_BASH_SHELL } from '../../shared/windows-terminal-shell'
-import { resolveAgentForegroundProcess } from './agent-foreground-process'
+import { resolveAgentForegroundProcessWithAvailability } from './agent-foreground-process'
 import { getAgentForegroundContextPaths } from './agent-foreground-context-paths'
 import { recognizeAgentProcessFromCommandLine } from '../../shared/agent-process-recognition'
+import { readWindowsConptyProcessIds } from './windows-conpty-process-membership'
 import { shouldUseShellReadyStartupDelivery } from '../../shared/codex-startup-delivery'
+import { assertSafeAgentStartupCwd, resolveSafePtyDefaultCwd } from './pty-default-cwd'
 
 const PANE_IDENTITY_ENV_KEYS = [
   'ORCA_PANE_KEY',
@@ -67,6 +69,7 @@ let ptyCounter = 0
 const ptyProcesses = new Map<string, pty.IPty>()
 const ptyShellName = new Map<string, string>()
 const ptyAgentForegroundContextPaths = new Map<string, string[]>()
+const ptyTerminalHandle = new Map<string, string>()
 // Why: node-pty's onData/onExit register native NAPI ThreadSafeFunction
 // callbacks. If the PTY is killed without disposing these listeners, the
 // stale callbacks survive into node::FreeEnvironment() where NAPI attempts
@@ -87,20 +90,7 @@ const exitListeners = new Set<ExitCallback>()
  * Returns a stable default cwd for locally spawned PTYs.
  */
 function getDefaultCwd(): string {
-  if (process.platform !== 'win32') {
-    return process.env.HOME || '/'
-  }
-
-  // Why: USERPROFILE is not guaranteed in all Windows launch contexts.
-  // Falling back to bare HOMEPATH yields a drive-relative path, so combine
-  // HOMEDRIVE + HOMEPATH to keep spawned PTYs anchored to the intended home.
-  if (process.env.USERPROFILE) {
-    return process.env.USERPROFILE
-  }
-  if (process.env.HOMEDRIVE && process.env.HOMEPATH) {
-    return `${process.env.HOMEDRIVE}${process.env.HOMEPATH}`
-  }
-  return 'C:\\'
+  return resolveSafePtyDefaultCwd()
 }
 
 /**
@@ -187,6 +177,7 @@ function clearPtyState(id: string): void {
   ptyProcesses.delete(id)
   ptyShellName.delete(id)
   ptyAgentForegroundContextPaths.delete(id)
+  ptyTerminalHandle.delete(id)
   ptyLoadGeneration.delete(id)
 }
 
@@ -350,8 +341,18 @@ export class LocalPtyProvider implements IPtyProvider {
     }
     const id = allocatePtyId(reattachId ?? undefined)
 
+    const startupAgentRecognition = args.command
+      ? recognizeAgentProcessFromCommandLine(args.command)
+      : null
+
     const defaultCwd = getDefaultCwd()
     const cwd = args.cwd || defaultCwd
+    // Why: gate on the effective cwd (post default-cwd fallback), not the raw
+    // args.cwd — an omitted cwd resolves to a safe default and must not be
+    // rejected as if it were a root-like path.
+    if (args.command && startupAgentRecognition) {
+      assertSafeAgentStartupCwd(cwd, args.command)
+    }
     const wslInfo = process.platform === 'win32' ? parseWslPath(cwd) : null
     const worktreeWslContext =
       process.platform === 'win32' ? getWslContextFromWorktreeId(args.worktreeId) : undefined
@@ -592,8 +593,7 @@ export class LocalPtyProvider implements IPtyProvider {
         finalEnv.ORCA_OMP_STATUS_EXTENSION ||
         finalEnv.ORCA_CODEX_HOME ||
         finalEnv.ORCA_AGENT_TEAMS_SHIM_DIR
-      const isCodexStartupCommand =
-        recognizeAgentProcessFromCommandLine(args.command)?.agent === 'codex'
+      const isCodexStartupCommand = startupAgentRecognition?.agent === 'codex'
       let shellLaunch: ReturnType<typeof getShellReadyLaunchConfig> | null = null
       if (args.command && isCodexStartupCommand) {
         const shouldWaitForShellReady = shouldUseShellReadyStartupDelivery({
@@ -680,6 +680,9 @@ export class LocalPtyProvider implements IPtyProvider {
     const proc = spawnResult.process
     ptyProcesses.set(id, proc)
     ptyShellName.set(id, getSpawnedShellName(shellPath))
+    if (finalEnv.ORCA_TERMINAL_HANDLE) {
+      ptyTerminalHandle.set(id, finalEnv.ORCA_TERMINAL_HANDLE)
+    }
     ptyAgentForegroundContextPaths.set(
       id,
       getAgentForegroundContextPaths({ cwd: args.cwd, worktreeId: args.worktreeId })
@@ -803,9 +806,21 @@ export class LocalPtyProvider implements IPtyProvider {
     ptyDisposables.set(id, disposables)
 
     if (args.command && !startupCommandDeliveredInShellArgs) {
-      writeStartupCommandWhenShellReady(shellReadyPromise, proc, args.command, (cleanup) => {
-        startupCommandCleanup = cleanup
-      })
+      // Why: only Orca-wrapped POSIX bash/zsh have bracketed-paste mode armed
+      // (bash via `bind`, zsh on by default), so multiline startup prompts can
+      // be pasted literally there; other shells keep the raw submit path.
+      const spawnedShellName = getSpawnedShellName(shellPath).toLowerCase()
+      const bracketedPasteSafe =
+        process.platform !== 'win32' && (spawnedShellName === 'bash' || spawnedShellName === 'zsh')
+      writeStartupCommandWhenShellReady(
+        shellReadyPromise,
+        proc,
+        args.command,
+        (cleanup) => {
+          startupCommandCleanup = cleanup
+        },
+        { bracketedPasteSafe }
+      )
     }
 
     // Why: publish the OS pid so ipc/pty can register the PTY with the memory
@@ -826,6 +841,26 @@ export class LocalPtyProvider implements IPtyProvider {
   }
   resize(id: string, cols: number, rows: number): void {
     ptyProcesses.get(id)?.resize(cols, rows)
+  }
+
+  // Why: node-pty pause() stops reading the pty master fd, so the kernel
+  // buffer fills and a flooding child blocks on write — true producer
+  // backpressure. Best-effort: a PTY torn down mid-call must never throw
+  // into the flow-control path.
+  pauseProducer(id: string): void {
+    try {
+      ptyProcesses.get(id)?.pause()
+    } catch {
+      /* PTY already destroyed */
+    }
+  }
+
+  resumeProducer(id: string): void {
+    try {
+      ptyProcesses.get(id)?.resume()
+    } catch {
+      /* PTY already destroyed */
+    }
   }
 
   // Why: node-pty caches the last winsize it applied on the IPty handle, so its
@@ -896,8 +931,19 @@ export class LocalPtyProvider implements IPtyProvider {
   async getInitialCwd(_id: string): Promise<string> {
     return ''
   }
-  async clearBuffer(_id: string): Promise<void> {
-    /* handled client-side in xterm.js */
+  async clearBuffer(id: string): Promise<void> {
+    // Why: xterm.js clear() only resets the renderer. ConPTY keeps its own
+    // screen buffer, so without this its stale cursor row makes the next
+    // prompt repaint land below a blank gap. No-op on POSIX.
+    //
+    // Unlike the daemon session, no PSReadLine form-feed nudge here: it is
+    // only safe at an empty prompt, and without a headless emulator this
+    // provider cannot tell whether input is pending.
+    try {
+      ptyProcesses.get(id)?.clear()
+    } catch {
+      /* PTY may have just exited */
+    }
   }
   acknowledgeDataEvent(_id: string, _charCount: number): void {
     /* no flow control for local */
@@ -926,13 +972,45 @@ export class LocalPtyProvider implements IPtyProvider {
       return null
     }
     try {
-      return await resolveAgentForegroundProcess(
+      const resolution = await resolveAgentForegroundProcessWithAvailability(
         proc.pid,
         resolveForegroundFallbackProcess(proc.process || null, ptyShellName.get(id)),
         {
           contextPaths: ptyAgentForegroundContextPaths.get(id)
         }
       )
+      return resolution.processName
+    } catch {
+      return null
+    }
+  }
+
+  async confirmForegroundProcess(id: string): Promise<string | null> {
+    const proc = ptyProcesses.get(id)
+    if (!proc) {
+      return null
+    }
+    try {
+      const resolution = await resolveAgentForegroundProcessWithAvailability(
+        proc.pid,
+        resolveForegroundFallbackProcess(proc.process || null, ptyShellName.get(id)),
+        {
+          contextPaths: ptyAgentForegroundContextPaths.get(id),
+          fresh: true,
+          ...(process.platform === 'win32'
+            ? {
+                forceProcessScan: true,
+                readWindowsConptyProcessIds: () => readWindowsConptyProcessIds(proc.pid)
+              }
+            : {})
+        }
+      )
+      // Why: a fresh scan can outlive this PTY id; never publish identity from
+      // an exited process or a replacement session that reused the same id.
+      if (ptyProcesses.get(id) !== proc) {
+        return null
+      }
+      return resolution.available ? resolution.processName : null
     } catch {
       return null
     }
@@ -945,11 +1023,12 @@ export class LocalPtyProvider implements IPtyProvider {
     /* re-spawning handles local revival */
   }
 
-  async listProcesses(): Promise<{ id: string; cwd: string; title: string }[]> {
+  async listProcesses(): Promise<PtyProcessInfo[]> {
     return Array.from(ptyProcesses.entries()).map(([id, proc]) => ({
       id,
       cwd: '',
-      title: proc.process || ptyShellName.get(id) || 'shell'
+      title: proc.process || ptyShellName.get(id) || 'shell',
+      ...(ptyTerminalHandle.get(id) ? { terminalHandle: ptyTerminalHandle.get(id) } : {})
     }))
   }
 
@@ -1018,7 +1097,7 @@ export class LocalPtyProvider implements IPtyProvider {
     return ptyProcesses.get(id)
   }
 
-  /** Kill all PTYs. Call on app quit. */
+  /** Kill all in-process local PTYs. Call on app quit. */
   killAll(): void {
     for (const [id, proc] of ptyProcesses) {
       safeKillAndClean(id, proc)

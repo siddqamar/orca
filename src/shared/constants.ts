@@ -203,6 +203,7 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     editorAutoSave: false,
     editorAutoSaveDelayMs: DEFAULT_EDITOR_AUTO_SAVE_DELAY_MS,
     editorMinimapEnabled: false,
+    richMarkdownSpellcheckEnabled: true,
     markdownReviewToolsEnabled: true,
     primarySelectionMiddleClickPaste: getDefaultPrimarySelectionMiddleClickPaste(),
     primarySelectionMiddleClickPasteDefaultedForLinux:
@@ -260,6 +261,10 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     windowBackgroundBlur: false,
     minimizeToTrayOnClose: false,
     terminalClipboardOnSelect: false,
+    // Why: OSC 52 is a classic data-exfiltration vector (any process piping
+    // untrusted output into the terminal can rewrite the clipboard). Keep the
+    // conservative default off; users who need Grok/tmux/nvim remote copy can
+    // enable the toggle. OSC 52 *query* remains disabled separately.
     terminalAllowOsc52Clipboard: false,
     claudeAgentTeamsMode: 'off',
     setupScriptLaunchMode: 'new-tab',
@@ -304,6 +309,10 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     claudeManagedAccounts: [],
     activeClaudeManagedAccountId: null,
     terminalScopeHistoryByWorktree: true,
+    terminalHiddenViewParking: true,
+    terminalMainSideEffectAuthority: true,
+    terminalHiddenDeliveryGate: true,
+    terminalModelQueryAuthority: true,
     defaultTuiAgent: null,
     disabledTuiAgents: [...DEFAULT_DISABLED_TUI_AGENTS],
     claudeAgentTeamsDefaultDisabledMigrated: true,
@@ -319,6 +328,8 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     defaultLinearTeamSelection: null,
     opencodeSessionCookie: '',
     opencodeWorkspaceId: '',
+    minimaxGroupId: '',
+    minimaxUsageModels: 'general',
     geminiCliOAuthEnabled: false,
     agentCmdOverrides: {},
     agentDefaultArgs: { ...DEFAULT_TUI_AGENT_ARGS },
@@ -433,7 +444,9 @@ export function getDefaultPersistedState(homedir: string): PersistedState {
     workspaceSession: getDefaultWorkspaceSession(),
     workspaceSessionsByHostId: {},
     sshTargets: [],
+    deletedSshConfigAliases: [],
     sshRemotePtyLeases: [],
+    claudeLivePtySessionIds: [],
     migrationUnsupportedPtyEntries: [],
     legacyPaneKeyAliasEntries: [],
     automations: [],

@@ -22,6 +22,7 @@ import type { BrowserPage, BrowserWorkspace, Tab, TerminalTab } from '../../../s
 import type { OpenFile } from '../store/slices/editor'
 import {
   _getWebSessionTabsTrackingCountsForTest,
+  acceptReplayedWebSessionTabsSnapshot,
   applyFreshWebSessionTabsSnapshot,
   applyWebSessionTabsSnapshot,
   applyWebSessionTabsSnapshots,
@@ -143,6 +144,46 @@ describe('applyWebSessionTabsSnapshot', () => {
       activeTabType: null
     })
     expect(shouldApplyWebSessionTabsSnapshot(sameEpochOlder, ENV)).toBe(false)
+  })
+
+  it('accepts a replayed same-epoch same-version snapshot after a transport reconnect', () => {
+    // Why: after a shared-control reconnect the server re-emits the current
+    // snapshot with an UNCHANGED epoch/version (the host did not restart).
+    // Without the replay reset the monotonic gate rejects it and the mirror
+    // stays frozen (#7718).
+    const snapshot = makeSnapshot([], { snapshotVersion: 5, activeTabType: null })
+
+    expect(shouldApplyWebSessionTabsSnapshot(snapshot, ENV)).toBe(true)
+    // Same frame again during normal operation: still rejected as stale.
+    expect(shouldApplyWebSessionTabsSnapshot(snapshot, ENV)).toBe(false)
+
+    acceptReplayedWebSessionTabsSnapshot(ENV, snapshot.worktree)
+    expect(shouldApplyWebSessionTabsSnapshot(snapshot, ENV)).toBe(true)
+
+    // The replay reset re-primes tracking: ordering protection resumes for
+    // subsequent frames (an older same-epoch frame is still rejected).
+    const older = makeSnapshot([], { snapshotVersion: 4, activeTabType: null })
+    expect(shouldApplyWebSessionTabsSnapshot(older, ENV)).toBe(false)
+    const newer = makeSnapshot([], { snapshotVersion: 6, activeTabType: null })
+    expect(shouldApplyWebSessionTabsSnapshot(newer, ENV)).toBe(true)
+  })
+
+  it('scopes the replay reset to the replayed environment and worktree', () => {
+    const snapshot = makeSnapshot([], { snapshotVersion: 5, activeTabType: null })
+    const otherWorktree = makeSnapshot([], {
+      worktree: 'repo::/other-worktree',
+      snapshotVersion: 5,
+      activeTabType: null
+    })
+
+    expect(shouldApplyWebSessionTabsSnapshot(snapshot, ENV)).toBe(true)
+    expect(shouldApplyWebSessionTabsSnapshot(otherWorktree, ENV)).toBe(true)
+
+    acceptReplayedWebSessionTabsSnapshot(ENV, snapshot.worktree)
+
+    // Only the replayed worktree re-applies; the other stays gated.
+    expect(shouldApplyWebSessionTabsSnapshot(otherWorktree, ENV)).toBe(false)
+    expect(shouldApplyWebSessionTabsSnapshot(snapshot, ENV)).toBe(true)
   })
 
   it('ignores remote snapshots for the local floating workspace', () => {
@@ -748,6 +789,7 @@ describe('applyWebSessionTabsSnapshot', () => {
           leafId: LEAF_ID,
           isActive: true,
           launchAgent: 'codex',
+          startupCwd: '/worktree/packages/web',
           status: 'ready',
           terminal: 'terminal-1'
         }
@@ -765,6 +807,7 @@ describe('applyWebSessionTabsSnapshot', () => {
         id: mirroredId,
         ptyId: 'remote:web-env-1@@terminal-1',
         launchAgent: 'codex',
+        startupCwd: '/worktree/packages/web',
         title: 'host shell',
         worktreeId: WT
       }
@@ -825,6 +868,48 @@ describe('applyWebSessionTabsSnapshot', () => {
       title: 'zsh'
     })
     expect(patch.tabsByWorktree?.[WT]?.[0]?.launchAgent).toBeUndefined()
+  })
+
+  it('drops mirrored startup cwd when a later host snapshot omits it', () => {
+    const existingTab: TerminalTab = {
+      id: toWebTerminalSurfaceTabId('host-tab-1'),
+      ptyId: 'remote:web-env-1@@terminal-1',
+      worktreeId: WT,
+      title: 'zsh',
+      defaultTitle: 'zsh',
+      customTitle: null,
+      color: null,
+      sortOrder: 0,
+      createdAt: NOW,
+      startupCwd: '/worktree/packages/web'
+    }
+
+    const patch = applyWebSessionTabsSnapshot(
+      makeState({
+        tabsByWorktree: { [WT]: [existingTab] },
+        ptyIdsByTabId: { [existingTab.id]: ['remote:web-env-1@@terminal-1'] }
+      }),
+      makeSnapshot([
+        {
+          type: 'terminal',
+          id: HOST_SURFACE_ID,
+          title: 'zsh',
+          parentTabId: 'host-tab-1',
+          leafId: LEAF_ID,
+          isActive: true,
+          status: 'ready',
+          terminal: 'terminal-1'
+        }
+      ]),
+      ENV,
+      NOW + 1
+    ) as Partial<WebSessionTabsSyncState>
+
+    expect(patch.tabsByWorktree?.[WT]?.[0]).toMatchObject({
+      id: existingTab.id,
+      title: 'zsh'
+    })
+    expect(patch.tabsByWorktree?.[WT]?.[0]?.startupCwd).toBeUndefined()
   })
 
   it('adopts host viewMode when this client has no prior tab', () => {

@@ -15,12 +15,26 @@ import {
   resolveOpaqueTerminalBackground,
   resolveEffectiveTerminalAppearance
 } from '@/lib/terminal-theme'
-import type { ManagedPane, PaneManager } from '@/lib/pane-manager/pane-manager'
+import type {
+  ManagedPane,
+  PaneExternalDropTarget,
+  PaneManager
+} from '@/lib/pane-manager/pane-manager'
 import TerminalSearch from '@/components/TerminalSearch'
 import type { PtyTransport } from './pty-transport'
 import { fitPanes, isWindowsUserAgent } from './pane-helpers'
 import { getConnectionId, getConnectionIdFromState } from '@/lib/connection-context'
-import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
+import {
+  getExplicitRuntimeEnvironmentIdForWorktree,
+  getRuntimeEnvironmentIdForWorktree
+} from '@/lib/worktree-runtime-owner'
+import {
+  selectRuntimeAwareSshStatus,
+  selectRuntimeAwareSshTargetLabel,
+  selectRuntimeAwareSshTargetRemoved
+} from '@/store/slices/runtime-environment-ssh'
+import { hydrateRuntimeEnvironmentSshState } from '@/runtime/runtime-environment-ssh-state'
+import { isPairedWebClientWindow } from '@/lib/desktop-window-chrome'
 import { handleInternalTerminalFileDrop } from './terminal-drop-handler'
 import { recordTerminalUserInputForLeaf } from './terminal-input-activity'
 import {
@@ -29,6 +43,7 @@ import {
   serializeTerminalLayout
 } from './layout-serialization'
 import { makePaneKey } from '../../../../shared/stable-pane-id'
+import type { TerminalKittyKeyboardModeTracker } from '../../../../shared/terminal-kitty-keyboard-mode-tracker'
 import {
   applyExpandedLayoutTo,
   cancelPendingPaneSizeRefreshFrames,
@@ -62,6 +77,11 @@ import { useSystemPrefersDark } from './use-system-prefers-dark'
 import { useTerminalPaneGlobalEffects } from './use-terminal-pane-global-effects'
 import { useTerminalPaneLifecycle } from './use-terminal-pane-lifecycle'
 import { useTerminalPaneContextMenu } from './use-terminal-pane-context-menu'
+import {
+  detachTerminalPaneToTab,
+  isTerminalTabStripDropTarget,
+  resolveTerminalTabStripDropTarget
+} from './terminal-pane-tab-detach'
 import type { PreparedAgentSessionFork } from './terminal-agent-session-fork'
 import { useNotificationDispatch } from './use-notification-dispatch'
 import { connectPanePty } from './pty-connection'
@@ -80,10 +100,11 @@ import {
 } from '@/lib/pane-manager/mobile-driver-state'
 import { shouldChatTakeOverMobileSurface } from '../native-chat/native-chat-send-eligibility'
 import { canToggleNativeChat } from '../native-chat/native-chat-availability'
-import type { AgentType } from '../../../../shared/agent-status-types'
+import { isNativeChatTranscriptLocalReadable } from '@/lib/native-chat-transcript-readability'
 import { resolvePaneKeyForManager } from '@/lib/pane-manager/pane-key-resolution'
 import { safeFit } from '@/lib/pane-manager/pane-tree-ops'
 import { captureTerminalShutdownLayout } from './terminal-shutdown-layout-capture'
+import { getOverrideAffectedPanes, getPanesNeedingOverrideFit } from './override-affected-panes'
 import {
   inspectRuntimeTerminalProcess,
   isRemoteRuntimePtyId
@@ -126,6 +147,7 @@ import { scheduleImagePasteWebglAtlasRecovery } from './terminal-webgl-atlas-rec
 import { restoreTerminalFitToDesktop, restoreTerminalFitsToDesktop } from './terminal-fit-restore'
 import { useVisibleTerminalTabClaim } from './use-visible-terminal-tab-claim'
 import { TerminalSshReconnectOverlay } from './TerminalSshReconnectOverlay'
+import { selectTerminalTabAgentTypesByLeaf } from './terminal-tab-agent-type-index'
 
 const NATIVE_CHAT_ROOT_SELECTOR = '[data-native-chat-root="true"]'
 
@@ -158,8 +180,11 @@ import {
   subscribeTerminalPaneAttention
 } from './terminal-pane-attention-subscriptions'
 import { getCachedTerminalTabForWorktree } from './terminal-tab-lookup'
-import { getCachedTerminalGroupIdForWorktree } from './terminal-unified-tab-lookup'
-import { resolveTabAgentFromTitle } from '@/lib/use-tab-agent'
+import {
+  getCachedTerminalGroupIdForWorktree,
+  getCachedUnifiedTerminalTabForWorktree
+} from './terminal-unified-tab-lookup'
+import { resolveNativeChatLeafTitleAgent } from './native-chat-leaf-title-agent'
 import { useRepoById } from '@/store/selectors'
 import {
   isXtermHelperTextarea,
@@ -168,6 +193,7 @@ import {
   resyncTerminalFocusForWindowFocus,
   setRegularTerminalInputFocusAttribute
 } from './regular-terminal-focus-ownership'
+import { refreshTerminalImeInputContext } from './terminal-ime-input-context-refresh'
 
 type TerminalPaneProps = {
   tabId: string
@@ -274,6 +300,10 @@ export default function TerminalPane({
   // read this map at dispatch time to pass cwd into splitPane.
   const paneCwdRef = useRef<Map<number, { cwd: string; confirmed: boolean }>>(new Map())
   const paneMode2031Ref = useRef<Map<number, boolean>>(new Map())
+  // Why: per-pane mirror of the kitty keyboard flags negotiated by the pane's
+  // application (fed from PTY output in pty-connection). The keyboard policy
+  // reads it to encode Option chords as kitty CSI-u for opted-in TUIs.
+  const paneKittyKeyboardModesRef = useRef<Map<number, TerminalKittyKeyboardModeTracker>>(new Map())
   const paneLastThemeModeRef = useRef<Map<number, 'dark' | 'light'>>(new Map())
   const panePtyBindingsRef = useRef<Map<number, IDisposable>>(new Map())
   // Why: tracks panes currently replaying recorded PTY bytes into xterm
@@ -295,16 +325,47 @@ export default function TerminalPane({
     }
     return connectionId
   })
+  const nativeChatTranscriptIsLocalReadable = useAppStore((store) =>
+    isNativeChatTranscriptLocalReadable(getConnectionIdFromState(store, worktreeId))
+  )
+  // Which machine's SSH store this target belongs to: a remote Orca server's
+  // per-environment bucket, or null for this machine's local SSH maps. The
+  // explicit-owner resolver never lets a merely focused runtime make a
+  // local-owned workspace look remote. The paired web client mirrors its one
+  // host through the local maps instead.
+  const sshReconnectEnvironmentId = useAppStore((store) =>
+    sshReconnectTargetId && !isPairedWebClientWindow()
+      ? getExplicitRuntimeEnvironmentIdForWorktree(store, worktreeId)
+      : null
+  )
   const sshReconnectStatus = useAppStore((store) =>
     sshReconnectTargetId
-      ? (store.sshConnectionStates.get(sshReconnectTargetId)?.status ?? 'disconnected')
+      ? selectRuntimeAwareSshStatus(store, sshReconnectEnvironmentId, sshReconnectTargetId)
       : null
   )
   const sshReconnectTargetLabel = useAppStore((store) =>
     sshReconnectTargetId
-      ? (store.sshTargetLabels.get(sshReconnectTargetId) ?? sshReconnectTargetId)
+      ? selectRuntimeAwareSshTargetLabel(store, sshReconnectEnvironmentId, sshReconnectTargetId)
       : ''
   )
+  // Why: the target was removed entirely (a ghost) when it's no longer a known
+  // SSH target on its owning host. Reconnecting to it can only fail ("SSH
+  // target not found"), so the overlay must offer to remove the workspace
+  // instead of Connect. The selector requires positive removal evidence.
+  const sshReconnectTargetRemoved = useAppStore((store) =>
+    sshReconnectTargetId
+      ? selectRuntimeAwareSshTargetRemoved(store, sshReconnectEnvironmentId, sshReconnectTargetId)
+      : false
+  )
+  useEffect(() => {
+    if (!sshReconnectEnvironmentId) {
+      return
+    }
+    // Why: an SSH-backed workspace can be mirrored before its owning
+    // environment's bucket ever hydrated (no-op once hydrated), and overlay
+    // state must come from fetched evidence, never from an empty default.
+    void hydrateRuntimeEnvironmentSshState(sshReconnectEnvironmentId).catch(() => {})
+  }, [sshReconnectEnvironmentId])
 
   useVisibleTerminalTabClaim({ isVisible, tabId })
 
@@ -341,8 +402,9 @@ export default function TerminalPane({
   const daemonActions = useDaemonActions()
   // Why: override state lives in a plain Map for perf (safeFit reads it on
   // every resize). This counter forces a re-render when overrides change so
-  // the mobile-fit banner appears/disappears. When an override is cleared
-  // (desktop-fit), we also trigger safeFit on affected panes so the terminal
+  // the mobile-fit banner appears/disappears. On both transitions we also
+  // trigger safeFit on affected panes: mobile-fit shrinks the watcher's xterm
+  // to phone dims (matching the live phone-wrapped stream), and desktop-fit
   // resizes back to desktop dimensions.
   const [, setOverrideTick] = useState(0)
   useEffect(() => {
@@ -367,17 +429,49 @@ export default function TerminalPane({
 
     const unsubscribe = onOverrideChange((event) => {
       setOverrideTick((n) => n + 1)
-      if (event.mode === 'desktop-fit') {
-        const manager = managerRef.current
-        if (!manager) {
+      const manager = managerRef.current
+      if (!manager) {
+        return
+      }
+      // Why: pane IDs are per-tab, so resolve the affected PTY through this
+      // tab's live transport bindings instead of global numeric pane IDs.
+      const getAffectedPanes = (): ReturnType<typeof manager.getPanes> =>
+        getOverrideAffectedPanes(
+          manager.getPanes(),
+          (paneId) => paneTransportsRef.current.get(paneId)?.getPtyId(),
+          event.ptyId
+        )
+      if (event.mode === 'mobile-fit') {
+        // Why: when mobile starts driving, the agent re-renders its output at
+        // phone width and that phone-wrapped byte stream flows live into this
+        // passive watcher's xterm. xterm must shrink to the phone dims now or
+        // the wide desktop grid renders the narrow stream as overlapping,
+        // garbled lines. safeFit honors the active override and parks xterm at
+        // override.cols/rows, matching the incoming stream. rAF lets the DOM
+        // settle before the resize; no loud fallback is needed because the
+        // override branch of safeFit is itself the authoritative resize.
+        // Why: override events fan out to every terminal tab; skip the rAF
+        // unless this tab has a pane still parked at the wrong grid.
+        const panesNeedingFit = getPanesNeedingOverrideFit(
+          getAffectedPanes(),
+          event.cols,
+          event.rows
+        )
+        if (panesNeedingFit.length === 0) {
           return
         }
-        // Why: pane IDs are per-tab, so resolve the affected PTY through this
-        // tab's live transport bindings instead of global numeric pane IDs.
-        const getAffectedPanes = (): ReturnType<typeof manager.getPanes> =>
-          manager
-            .getPanes()
-            .filter((pane) => paneTransportsRef.current.get(pane.id)?.getPtyId() === event.ptyId)
+        scheduleFitFrame(() => {
+          for (const pane of getPanesNeedingOverrideFit(
+            getAffectedPanes(),
+            event.cols,
+            event.rows
+          )) {
+            safeFit(pane)
+          }
+        })
+        return
+      }
+      if (event.mode === 'desktop-fit') {
         // Why: fitAddon.fit() measures DOM dimensions, so it must run after
         // the browser has settled layout. Running synchronously inside the
         // IPC callback can produce stale measurements. rAF ensures the DOM
@@ -564,52 +658,47 @@ export default function TerminalPane({
   // communicates the presence-lock inside the chat surface instead (U9/R8).
   const unifiedTabId = useAppStore(
     (store) =>
-      (store.unifiedTabsByWorktree[worktreeId] ?? []).find(
-        (t) => t.contentType === 'terminal' && t.entityId === tabId
-      )?.id
+      getCachedUnifiedTerminalTabForWorktree(store.unifiedTabsByWorktree, worktreeId, tabId)?.id
   )
   const isChatViewMode = useAppStore(
     (store) =>
-      (store.unifiedTabsByWorktree[worktreeId] ?? []).find(
-        (t) => t.contentType === 'terminal' && t.entityId === tabId
-      )?.viewMode === 'chat'
+      getCachedUnifiedTerminalTabForWorktree(store.unifiedTabsByWorktree, worktreeId, tabId)
+        ?.viewMode === 'chat'
   )
   const nativeChatEnabled = useAppStore((store) => store.settings?.experimentalNativeChat === true)
   const effectiveChatViewMode = nativeChatEnabled && isChatViewMode
   const unifiedTabLabel = useAppStore(
     (store) =>
-      (store.unifiedTabsByWorktree[worktreeId] ?? []).find(
-        (t) => t.contentType === 'terminal' && t.entityId === tabId
-      )?.label
+      getCachedUnifiedTerminalTabForWorktree(store.unifiedTabsByWorktree, worktreeId, tabId)?.label
+  )
+  const runtimePaneTitlesByPaneId = useAppStore(
+    useShallow((store) => store.runtimePaneTitlesByTabId[tabId] ?? {})
   )
   // The native-chat toggle joins the pane header's split/close cluster. Eligible
   // when Orca launched a *supported* agent here or one was detected live for the
   // leaf, keyed `${tabId}:${leafId}`. Carry the agent identity, not just "an
   // agent exists", so the gate can reject Grok et al.
-  // Scoped to this tab's panes (leafId → agentType) and shallow-compared so an
-  // unrelated tab's agent status tick doesn't re-render this pane.
-  const tabAgentTypeByLeaf = useAppStore(
-    useShallow((store) => {
-      const prefix = `${tabId}:`
-      const byLeaf: Record<string, AgentType> = {}
-      for (const [paneKey, entry] of Object.entries(store.agentStatusByPaneKey)) {
-        if (paneKey.startsWith(prefix) && entry.agentType) {
-          byLeaf[paneKey.slice(prefix.length)] = entry.agentType
-        }
-      }
-      return byLeaf
-    })
+  // Scope to this tab's panes and reuse the shared map index so hidden tabs do
+  // not each rescan every agent entry on unrelated store writes.
+  const tabAgentTypeByLeaf = useAppStore((store) =>
+    selectTerminalTabAgentTypesByLeaf(store.agentStatusByPaneKey, tabId)
   )
   const toggleTabViewMode = useAppStore((store) => store.toggleTabViewMode)
   const savedLayout = useAppStore((store) => store.terminalLayoutsByTabId[tabId] ?? EMPTY_LAYOUT)
   const terminalTab = useAppStore((store) =>
     getCachedTerminalTabForWorktree(store.tabsByWorktree, worktreeId, tabId)
   )
-  // Why: manually-started/resumed TUIs can be recognized by the unified tab
-  // label before the backing terminal title or hook state catches up.
-  const titleResolvedAgent =
-    resolveTabAgentFromTitle(unifiedTabLabel ?? '') ??
-    (terminalTab ? resolveTabAgentFromTitle(terminalTab.title) : null)
+  const resolveTitleAgentForLeaf = useCallback(
+    (leafId: string | null) =>
+      resolveNativeChatLeafTitleAgent({
+        leafId,
+        panes: managerRef.current?.getPanes() ?? [],
+        runtimePaneTitlesByPaneId,
+        tabLabel: unifiedTabLabel,
+        terminalTitle: terminalTab?.title
+      }),
+    [runtimePaneTitlesByPaneId, terminalTab?.title, unifiedTabLabel]
+  )
   // Per-leaf eligibility: a split can mix a supported agent in one leaf with an
   // unsupported one in another, so the toggle is gated by the specific leaf.
   // A leaf's own live agent is authoritative; the tab-wide launch/title hints
@@ -627,7 +716,8 @@ export default function TerminalPane({
         contentType: 'terminal',
         launchAgent: detectedAgent ? null : terminalTab?.launchAgent,
         detectedAgent,
-        resolvedAgent: detectedAgent ? null : titleResolvedAgent,
+        resolvedAgent: detectedAgent ? null : resolveTitleAgentForLeaf(leafId),
+        nativeChatTranscriptIsLocalReadable,
         isChatViewMode: isChatViewForLeaf
       })
     },
@@ -636,8 +726,9 @@ export default function TerminalPane({
       effectiveChatViewMode,
       chatLeafId,
       nativeChatEnabled,
+      nativeChatTranscriptIsLocalReadable,
       terminalTab?.launchAgent,
-      titleResolvedAgent
+      resolveTitleAgentForLeaf
     ]
   )
   const toggleNativeChatForLeaf = useCallback(
@@ -996,7 +1087,13 @@ export default function TerminalPane({
       // Why: also clear the host buffer for remote-server panes, or the next
       // host snapshot replays the scrollback we just cleared locally.
       const ptyId = paneTransportsRef.current.get(pane.id)?.getPtyId() ?? null
-      clearWebRuntimeTerminalBuffer(ptyId)
+      const clearedRemoteHostBuffer = clearWebRuntimeTerminalBuffer(ptyId)
+      if (!clearedRemoteHostBuffer && ptyId) {
+        // Why: local/daemon/SSH PTYs keep their own screen state (ConPTY on
+        // Windows), and a stale host cursor row makes the next prompt repaint
+        // land below a blank gap after a frontend-only clear.
+        window.api.pty.clearBuffer(ptyId)
+      }
       persistLayoutSnapshot()
     },
     [paneTransportsRef, persistLayoutSnapshot]
@@ -1298,6 +1395,54 @@ export default function TerminalPane({
     setPendingCloseConfirmation(null)
   }, [])
 
+  const resolveExternalPaneDropTarget = useCallback(
+    ({
+      sourcePaneId,
+      clientX,
+      clientY
+    }: {
+      sourcePaneId: number
+      clientX: number
+      clientY: number
+    }): PaneExternalDropTarget | null => {
+      const manager = managerRef.current
+      const panes = manager?.getPanes() ?? []
+      if (panes.length <= 1 || !panes.some((pane) => pane.id === sourcePaneId)) {
+        return null
+      }
+      return resolveTerminalTabStripDropTarget({
+        clientX,
+        clientY,
+        groupsByWorktree: useAppStore.getState().groupsByWorktree,
+        worktreeId
+      })
+    },
+    [worktreeId]
+  )
+
+  const handleExternalPaneDrop = useCallback(
+    (sourcePaneId: number, target: PaneExternalDropTarget): boolean => {
+      if (!isTerminalTabStripDropTarget(target)) {
+        return false
+      }
+      const fallbackPtyId = paneTransportsRef.current.get(sourcePaneId)?.getPtyId() ?? null
+      return (
+        detachTerminalPaneToTab({
+          fallbackPtyId,
+          getStore: useAppStore.getState,
+          manager: managerRef.current,
+          persistLayoutSnapshot,
+          sourcePaneId,
+          sourceTabId: tabId,
+          targetGroupId: target.groupId,
+          targetIndex: target.insertionIndex,
+          worktreeId
+        }) !== null
+      )
+    },
+    [persistLayoutSnapshot, tabId, worktreeId]
+  )
+
   useTerminalPaneLifecycle({
     tabId,
     worktreeId,
@@ -1321,6 +1466,7 @@ export default function TerminalPane({
     paneTransportsRef,
     paneCwdRef,
     paneMode2031Ref,
+    paneKittyKeyboardModesRef,
     paneLastThemeModeRef,
     panePtyBindingsRef,
     replayingPanesRef,
@@ -1354,7 +1500,9 @@ export default function TerminalPane({
     paneTitlesRef,
     setRenamingPaneId,
     setPaneCount,
-    setPaneLayoutRevision
+    setPaneLayoutRevision,
+    resolveExternalPaneDropTarget,
+    onExternalPaneDrop: handleExternalPaneDrop
   })
 
   useEffect(() => {
@@ -1543,6 +1691,7 @@ export default function TerminalPane({
         startup: { command: 'codex' },
         paneTransportsRef,
         paneMode2031Ref,
+        paneKittyKeyboardModesRef,
         paneLastThemeModeRef,
         replayingPanesRef,
         isActiveRef,
@@ -1620,10 +1769,12 @@ export default function TerminalPane({
 
   useTerminalKeyboardShortcuts({
     tabId,
+    worktreeId,
     isActive,
     keyboardScopeRef: containerRef,
     managerRef,
     paneTransportsRef,
+    panePtyBindingsRef,
     paneCwdRef,
     fallbackCwd: cwd ?? '',
     expandedPaneIdRef,
@@ -1641,6 +1792,7 @@ export default function TerminalPane({
     searchOpenRef,
     searchStateRef,
     macOptionAsAltRef,
+    paneKittyKeyboardModesRef,
     keybindings,
     terminalShortcutPolicy: settings?.terminalShortcutPolicy ?? 'orca-first'
   })
@@ -1738,6 +1890,10 @@ export default function TerminalPane({
     }
     let ownsRegularTerminalFocus = false
     let releasedHelperOnWindowBlur: HTMLElement | null = null
+    // Why: the IME refresh's synchronous blur emits a focusout that would flip
+    // terminalInputFocused false mid-handoff; latch it so the main process keeps
+    // routing Terminal-first shortcuts until the refocus lands.
+    let refreshingImeInputContext = false
     const syncFocused = (focused: boolean): void => {
       ownsRegularTerminalFocus = focused
       if (focused) {
@@ -1747,8 +1903,20 @@ export default function TerminalPane({
       window.api.ui.setTerminalInputFocused?.(focused)
     }
     const onFocusIn = (event: FocusEvent): void => {
-      if (isXtermHelperTextarea(event.target)) {
-        syncFocused(true)
+      if (!isXtermHelperTextarea(event.target)) {
+        return
+      }
+      syncFocused(true)
+      // Why: helper→helper pane handoffs skip window blur and can leave a stale
+      // macOS NSTextInputContext; the refresh's refocus arrives with a
+      // non-helper relatedTarget, so this cannot recurse.
+      if (isXtermHelperTextarea(event.relatedTarget) && event.relatedTarget !== event.target) {
+        refreshingImeInputContext = true
+        try {
+          refreshTerminalImeInputContext(event.target, {})
+        } finally {
+          refreshingImeInputContext = false
+        }
       }
     }
     const onFocusOut = (event: FocusEvent): void => {
@@ -1756,6 +1924,9 @@ export default function TerminalPane({
         return
       }
       if (isXtermHelperTextarea(event.relatedTarget)) {
+        return
+      }
+      if (refreshingImeInputContext) {
         return
       }
       syncFocused(false)
@@ -2776,6 +2947,7 @@ export default function TerminalPane({
   const chatPanePtyId = chatPane
     ? (paneTransportsRef.current.get(chatPane.id)?.getPtyId() ?? null)
     : null
+  const chatPaneResolvedAgent = chatPane ? resolveTitleAgentForLeaf(chatPane.leafId) : null
   const activePaneIsChatLeaf = Boolean(
     isChatViewMode && activePane?.leafId && activePane.leafId === chatLeafId
   )
@@ -2842,6 +3014,9 @@ export default function TerminalPane({
           targetId={sshReconnectTargetId}
           targetLabel={sshReconnectTargetLabel}
           status={sshReconnectStatus}
+          targetRemoved={sshReconnectTargetRemoved}
+          worktreeId={worktreeId}
+          sshOwnerEnvironmentId={sshReconnectEnvironmentId}
         />
       ) : null}
       <DaemonActionDialog api={daemonActions} />
@@ -2874,6 +3049,7 @@ export default function TerminalPane({
                 paneKey={makePaneKey(tabId, chatPane.leafId)}
                 targetPtyId={chatPanePtyId}
                 launchAgent={terminalTab?.launchAgent}
+                resolvedAgent={chatPaneResolvedAgent}
                 onSwitchToTerminal={() => toggleNativeChatForLeaf(chatPane.leafId)}
                 contextMenuActions={{
                   onSplitRight: () => contextMenu.runForPane(chatPane.id, contextMenu.onSplitRight),

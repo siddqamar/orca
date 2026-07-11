@@ -5,12 +5,14 @@ import {
   type AgentStartupShell
 } from './tui-agent-startup-shell'
 import type { TuiAgent } from './types'
+import type { ExecutionHostId, ExecutionHostScope } from './execution-host'
 
 export const AI_VAULT_AGENTS = [
   'claude',
   'codex',
   'hermes',
   'pi',
+  'omp',
   'cursor',
   'gemini',
   'rovo',
@@ -23,6 +25,11 @@ export const AI_VAULT_AGENTS = [
   'kimi'
 ] as const satisfies readonly TuiAgent[]
 
+// Why: the aiVault.listSessions RPC schema CLAMPS scopePaths to this bound
+// (safe: scope paths only widen discovery). Producer-side caps against the same
+// value are optional belt-and-braces, not required for the request to succeed.
+export const AI_VAULT_SCOPE_PATHS_MAX_COUNT = 64
+
 export type AiVaultAgent = (typeof AI_VAULT_AGENTS)[number]
 export type AiVaultScope = 'workspace' | 'project' | 'all'
 export type AiVaultSort = 'updated' | 'created'
@@ -33,6 +40,7 @@ export const AI_VAULT_AGENT_LABELS = {
   codex: 'Codex',
   hermes: 'Hermes',
   pi: 'Pi',
+  omp: 'OMP',
   cursor: 'Cursor',
   gemini: 'Gemini',
   rovo: 'Rovo Dev',
@@ -51,8 +59,22 @@ export type AiVaultSessionPreviewMessage = {
   timestamp: string | null
 }
 
+// Terminal statuses come from <task-notification> records in the parent
+// transcript; 'running' is inferred from recent transcript activity.
+export type AiVaultSubagentRunStatus = 'running' | 'completed' | 'failed' | 'stopped'
+
+// Set only on Task subagent transcript rows (listed on demand under their
+// parent session); null for every top-level scanned session.
+export type AiVaultSessionSubagentInfo = {
+  parentSessionId: string
+  agentType: string | null
+  status: AiVaultSubagentRunStatus | null
+}
+
 export type AiVaultSession = {
   id: string
+  executionHostId: ExecutionHostId
+  executionHostPlatform?: NodeJS.Platform | null
   agent: AiVaultAgent
   sessionId: string
   title: string
@@ -67,10 +89,67 @@ export type AiVaultSession = {
   messageCount: number
   totalTokens: number
   previewMessages: AiVaultSessionPreviewMessage[]
+  // Recoverable signal for sessions whose conversation transcript persisted zero
+  // user/assistant turns: queued (never-flushed) prompts survive even when the
+  // main conversation was lost.
+  queuedMessageCount: number
+  // Number of Task subagent transcripts stored beside this session; always 0
+  // for agents that don't materialize subagent transcripts. Doubles as the
+  // recoverable signal for zero-turn sessions.
+  subagentTranscriptCount: number
   resumeCommand: string
+  subagent: AiVaultSessionSubagentInfo | null
+}
+
+export type AiVaultSubagentListArgs = {
+  agent: AiVaultAgent
+  parentFilePath: string
+  // The session's host. Subagent transcripts are read from the local
+  // filesystem, so non-local hosts resolve to an empty list.
+  executionHostId?: ExecutionHostId
+}
+
+export type AiVaultSubagentListResult = {
+  sessions: AiVaultSession[]
+  issues: AiVaultScanIssue[]
+}
+
+// A session is only offered for normal resume when its transcript actually holds
+// conversation turns; resuming a zero-turn transcript lands in an empty session.
+// Conversation previews count as evidence too: some parsers (e.g. Grok, OpenCode
+// fallback schemas) only learn the turn count from metadata that may be absent.
+export function isAiVaultSessionResumableContent(
+  session: Pick<AiVaultSession, 'messageCount' | 'previewMessages'>
+): boolean {
+  return (
+    session.messageCount > 0 ||
+    session.previewMessages.some(
+      (message) => message.role === 'user' || message.role === 'assistant'
+    )
+  )
+}
+
+export function aiVaultSessionRecoverableSignalCount(
+  session: Pick<AiVaultSession, 'queuedMessageCount' | 'subagentTranscriptCount'>
+): number {
+  return Math.max(0, session.queuedMessageCount) + Math.max(0, session.subagentTranscriptCount)
+}
+
+// Zero-turn transcript that still carries recoverable content (queued prompts
+// and/or subagent transcripts). Surfaced distinctly instead of hidden as empty.
+export function isAiVaultSessionRecoverableEmpty(
+  session: Pick<
+    AiVaultSession,
+    'messageCount' | 'previewMessages' | 'queuedMessageCount' | 'subagentTranscriptCount'
+  >
+): boolean {
+  return (
+    !isAiVaultSessionResumableContent(session) && aiVaultSessionRecoverableSignalCount(session) > 0
+  )
 }
 
 export type AiVaultScanIssue = {
+  executionHostId?: ExecutionHostId
   agent: AiVaultAgent
   path: string
   message: string
@@ -82,6 +161,7 @@ export type AiVaultListArgs = {
   // Active workspace/project paths. The global result is recency-capped, so these
   // guarantee a scoped view still surfaces its own (possibly older) sessions.
   scopePaths?: readonly string[]
+  executionHostScope?: ExecutionHostScope
 }
 
 export type AiVaultListResult = {
@@ -97,13 +177,29 @@ export function buildAiVaultResumeCommand(args: {
   platform: NodeJS.Platform
   commandOverride?: string | null
   codexHome?: string | null
+  resumeFilePath?: string | null
+  shell?: AgentStartupShell
 }): string {
-  const { agent, sessionId, cwd, platform, commandOverride, codexHome } = args
+  const { agent, sessionId, cwd, platform, commandOverride, codexHome, resumeFilePath, shell } =
+    args
   const baseCommand = commandOverride?.trim() || defaultAiVaultResumeCommandBase(agent)
-  const sessionArg = quoteShellArg(sessionId, platform)
+  // Why: OMP's `--resume` accepts an absolute transcript path, which resolves
+  // regardless of which session-dir root (custom OMP_CODING_AGENT_DIR / WSL
+  // home) the file was discovered under, where an id-prefix lookup scoped to
+  // the default store would miss it. Falls back to the id if no path is known.
+  const resumeTarget = agent === 'omp' && resumeFilePath?.trim() ? resumeFilePath.trim() : sessionId
+  const sessionArg = shell
+    ? quoteStartupArg(resumeTarget, shell)
+    : quoteShellArg(resumeTarget, platform)
   const resumeCommand = buildAgentResumeInvocation(agent, baseCommand, sessionArg)
 
-  return buildAiVaultResumeShellCommand({ resumeCommand, cwd, platform, codexHome })
+  return buildAiVaultResumeShellCommand({
+    resumeCommand,
+    cwd,
+    platform,
+    codexHome,
+    shell
+  })
 }
 
 export function buildAiVaultResumeShellCommand(args: {
@@ -217,6 +313,9 @@ function buildAgentResumeInvocation(
     case 'devin':
     case 'openclaw':
     case 'droid':
+    // Why: OMP resumes by absolute transcript path (see buildAiVaultResumeCommand),
+    // but the `--resume <arg>` invocation form is identical to the others here.
+    case 'omp':
       return `${baseCommand} --resume ${sessionArg}`
   }
 }
