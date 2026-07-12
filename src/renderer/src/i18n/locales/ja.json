@@ -11988,7 +11988,6 @@
         },
         "OfficeDocumentViewer": {
           "loading": "Loading document...",
-          "slide": "Slide",
           "formatWarning": "Some document formatting could not be reproduced."
         }
       },

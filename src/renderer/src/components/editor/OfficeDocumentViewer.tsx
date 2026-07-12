@@ -1,19 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import DOMPurify from 'dompurify'
-import { FileText, Presentation, Sheet } from 'lucide-react'
+import { FileText, Sheet } from 'lucide-react'
 import { translate } from '@/i18n/i18n'
-import {
-  decodeBase64Document,
-  parsePresentation,
-  parseWorkbook,
-  type PresentationSlide,
-  type SpreadsheetSheet
-} from './office-document-parse'
+import { decodeBase64Document, parseWorkbook, type SpreadsheetSheet } from './office-document-parse'
 import { getOfficeDocumentExtension } from './office-document-file'
 
 type ParsedDocument =
   | { kind: 'docx'; html: string; warnings: string[] }
-  | { kind: 'pptx'; slides: PresentationSlide[] }
+  | { kind: 'pptx'; buffer: ArrayBuffer }
   | { kind: 'xlsx'; sheets: SpreadsheetSheet[] }
 
 async function parseDocument(content: string, extension: string): Promise<ParsedDocument> {
@@ -28,9 +22,9 @@ async function parseDocument(content: string, extension: string): Promise<Parsed
     }
   }
   if (extension === 'pptx') {
-    return { kind: 'pptx', slides: await parsePresentation(buffer) }
+    return { kind: 'pptx', buffer }
   }
-  return { kind: 'xlsx', sheets: parseWorkbook(buffer) }
+  return { kind: 'xlsx', sheets: await parseWorkbook(buffer) }
 }
 
 function SpreadsheetView({ sheets }: { sheets: SpreadsheetSheet[] }): React.JSX.Element {
@@ -72,6 +66,59 @@ function SpreadsheetView({ sheets }: { sheets: SpreadsheetSheet[] }): React.JSX.
           </button>
         ))}
       </div>
+    </div>
+  )
+}
+
+function PresentationView({ buffer }: { buffer: ArrayBuffer }): React.JSX.Element {
+  const hostRef = React.useRef<HTMLDivElement>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+    const host = hostRef.current
+    if (!host) {
+      return
+    }
+    host.replaceChildren()
+    setError(null)
+
+    void import('pptx-preview').then(
+      ({ init }) => {
+        if (!active) {
+          return
+        }
+        const previewer = init(host, { width: 960, height: 540 })
+        void Promise.resolve(previewer.preview(buffer)).catch((reason: unknown) => {
+          if (active) {
+            setError(reason instanceof Error ? reason.message : String(reason))
+          }
+        })
+      },
+      (reason: unknown) => {
+        if (active) {
+          setError(reason instanceof Error ? reason.message : String(reason))
+        }
+      }
+    )
+
+    return () => {
+      active = false
+      host.replaceChildren()
+    }
+  }, [buffer])
+
+  if (error) {
+    return (
+      <div className="flex h-full items-center justify-center p-6 text-sm text-destructive">
+        {error}
+      </div>
+    )
+  }
+
+  return (
+    <div className="h-full overflow-auto bg-muted p-6 scrollbar-editor">
+      <div ref={hostRef} className="mx-auto w-fit max-w-full" />
     </div>
   )
 }
@@ -119,29 +166,7 @@ export default function OfficeDocumentViewer({
     return <SpreadsheetView sheets={document.sheets} />
   }
   if (document.kind === 'pptx') {
-    return (
-      <div className="h-full overflow-auto bg-muted p-6 scrollbar-editor">
-        <div className="mx-auto flex max-w-4xl flex-col gap-5">
-          {document.slides.map((slide) => (
-            <section
-              key={slide.number}
-              className="aspect-video overflow-auto rounded-md border border-border bg-background p-8 shadow-xs"
-            >
-              <div className="mb-4 flex items-center gap-2 text-xs text-muted-foreground">
-                <Presentation className="size-4" />
-                {translate('auto.components.editor.OfficeDocumentViewer.slide', 'Slide')}{' '}
-                {slide.number}
-              </div>
-              <div className="space-y-3 text-foreground">
-                {slide.paragraphs.map((paragraph, index) => (
-                  <p key={index}>{paragraph}</p>
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
-      </div>
-    )
+    return <PresentationView buffer={document.buffer} />
   }
   return (
     <div className="h-full overflow-auto bg-muted p-6 scrollbar-editor">
