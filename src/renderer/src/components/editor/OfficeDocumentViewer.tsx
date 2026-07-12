@@ -9,6 +9,7 @@ import {
   type PresentationSlide,
   type SpreadsheetSheet
 } from './office-document-parse'
+import { getOfficeDocumentExtension } from './office-document-file'
 
 type ParsedDocument =
   | { kind: 'docx'; html: string; warnings: string[] }
@@ -18,7 +19,7 @@ type ParsedDocument =
 async function parseDocument(content: string, extension: string): Promise<ParsedDocument> {
   const buffer = decodeBase64Document(content)
   if (extension === 'docx') {
-    const mammoth = await import('mammoth/mammoth.browser')
+    const mammoth = await import('mammoth/mammoth.browser.js')
     const result = await mammoth.convertToHtml({ arrayBuffer: buffer })
     return {
       kind: 'docx',
@@ -82,7 +83,7 @@ export default function OfficeDocumentViewer({
   content: string
   filePath: string
 }): React.JSX.Element {
-  const extension = useMemo(() => filePath.split('.').pop()?.toLowerCase() ?? '', [filePath])
+  const extension = useMemo(() => getOfficeDocumentExtension(filePath) ?? '', [filePath])
   const [document, setDocument] = useState<ParsedDocument | null>(null)
   const [error, setError] = useState<string | null>(null)
 

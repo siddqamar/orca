@@ -34,6 +34,7 @@ import { getDiffContentSignature } from './diff-content-signature'
 import { translate } from '@/i18n/i18n'
 import { CheckRunDetailsPanel } from './CheckRunDetailsPanel'
 import { ExternalFileChangeBanner } from './ExternalFileChangeBanner'
+import { isOfficeDocumentPath } from './office-document-file'
 
 const MonacoEditor = lazy(() => import('./MonacoEditor'))
 const DiffViewer = lazy(() => import('./DiffViewer'))
@@ -523,8 +524,8 @@ export function EditorContent({
       )
     }
     if (fc.isBinary) {
-      if (/\.(?:docx|pptx|xlsx)$/i.test(activeFile.filePath)) {
-        return <OfficeDocumentViewer content={fc.content} filePath={activeFile.filePath} />
+      if (isOfficeDocumentPath(contentFile.filePath)) {
+        return <OfficeDocumentViewer content={fc.content} filePath={contentFile.filePath} />
       }
       if (fc.isImage) {
         return (
@@ -772,6 +773,9 @@ export function EditorContent({
       return <FileLoadErrorView message={fc.loadError} onRetry={() => reloadContent(activeFile)} />
     }
     if (fc.isBinary) {
+      if (isOfficeDocumentPath(activeFile.filePath)) {
+        return <OfficeDocumentViewer content={fc.content} filePath={activeFile.filePath} />
+      }
       if (fc.isImage) {
         return (
           <ImageViewer content={fc.content} filePath={activeFile.filePath} mimeType={fc.mimeType} />
