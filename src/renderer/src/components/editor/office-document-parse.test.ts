@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest'
 import ExcelJS from 'exceljs'
-import { decodeBase64Document, parseWorkbook } from './office-document-parse'
+import JSZip from 'jszip'
+import { decodeBase64Document, parsePresentationText, parseWorkbook } from './office-document-parse'
 
 function toArrayBuffer(value: ArrayBuffer | Uint8Array): ArrayBuffer {
   if (value instanceof ArrayBuffer) {
@@ -32,6 +33,24 @@ describe('office document parsing', () => {
           ['Orca', '3', '6']
         ]
       }
+    ])
+  })
+
+  it('extracts fallback text from presentation slides', async () => {
+    const archive = new JSZip()
+    archive.file(
+      'ppt/slides/slide10.xml',
+      '<p:sld xmlns:p="p" xmlns:a="a"><a:p><a:r><a:t>Last</a:t></a:r></a:p></p:sld>'
+    )
+    archive.file(
+      'ppt/slides/slide2.xml',
+      '<p:sld xmlns:p="p" xmlns:a="a"><a:p><a:r><a:t>Hello </a:t></a:r><a:r><a:t>world</a:t></a:r></a:p></p:sld>'
+    )
+    const buffer = await archive.generateAsync({ type: 'arraybuffer' })
+
+    await expect(parsePresentationText(buffer)).resolves.toEqual([
+      { number: 2, paragraphs: ['Hello world'] },
+      { number: 10, paragraphs: ['Last'] }
     ])
   })
 })

@@ -11988,6 +11988,12 @@
         },
         "OfficeDocumentViewer": {
           "loading": "Loading document...",
+          "slide": "Slide",
+          "renderFallback": "PowerPoint visual preview did not finish. Showing extracted slide text instead.",
+          "renderEmptyFallback": "PowerPoint visual preview rendered no slides. Showing extracted slide text instead.",
+          "renderErrorFallback": "PowerPoint visual preview failed. Showing extracted slide text instead.",
+          "renderLoadFallback": "PowerPoint visual preview could not load. Showing extracted slide text instead.",
+          "renderingPresentation": "Rendering presentation...",
           "formatWarning": "Some document formatting could not be reproduced."
         }
       },

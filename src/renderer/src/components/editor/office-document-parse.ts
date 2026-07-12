@@ -1,8 +1,14 @@
 import ExcelJS from 'exceljs'
+import JSZip from 'jszip'
 
 export type SpreadsheetSheet = {
   name: string
   rows: string[][]
+}
+
+export type PresentationSlide = {
+  number: number
+  paragraphs: string[]
 }
 
 export function decodeBase64Document(content: string): ArrayBuffer {
@@ -54,4 +60,34 @@ export async function parseWorkbook(buffer: ArrayBuffer): Promise<SpreadsheetShe
   })
 
   return sheets
+}
+
+function slideNumber(path: string): number {
+  return Number(/slide(\d+)\.xml$/.exec(path)?.[1] ?? Number.MAX_SAFE_INTEGER)
+}
+
+export async function parsePresentationText(buffer: ArrayBuffer): Promise<PresentationSlide[]> {
+  const archive = await JSZip.loadAsync(buffer)
+  const paths = Object.keys(archive.files)
+    .filter((path) => /^ppt\/slides\/slide\d+\.xml$/.test(path))
+    .sort((left, right) => slideNumber(left) - slideNumber(right))
+
+  return Promise.all(
+    paths.map(async (path) => {
+      const xml = await archive.file(path)!.async('string')
+      const document = new DOMParser().parseFromString(xml, 'application/xml')
+      const elements = Array.from(document.getElementsByTagName('*'))
+      const paragraphs = elements
+        .filter((element) => element.localName === 'p')
+        .map((paragraph) =>
+          Array.from(paragraph.getElementsByTagName('*'))
+            .filter((element) => element.localName === 't')
+            .map((text) => text.textContent ?? '')
+            .join('')
+            .trim()
+        )
+        .filter(Boolean)
+      return { number: slideNumber(path), paragraphs }
+    })
+  )
 }

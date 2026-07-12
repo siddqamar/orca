@@ -4,6 +4,7 @@ import { FileText, Sheet } from 'lucide-react'
 import { translate } from '@/i18n/i18n'
 import { decodeBase64Document, parseWorkbook, type SpreadsheetSheet } from './office-document-parse'
 import { getOfficeDocumentExtension } from './office-document-file'
+import { OfficePresentationView } from './OfficePresentationView'
 
 type ParsedDocument =
   | { kind: 'docx'; html: string; warnings: string[] }
@@ -70,59 +71,6 @@ function SpreadsheetView({ sheets }: { sheets: SpreadsheetSheet[] }): React.JSX.
   )
 }
 
-function PresentationView({ buffer }: { buffer: ArrayBuffer }): React.JSX.Element {
-  const hostRef = React.useRef<HTMLDivElement>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let active = true
-    const host = hostRef.current
-    if (!host) {
-      return
-    }
-    host.replaceChildren()
-    setError(null)
-
-    void import('pptx-preview').then(
-      ({ init }) => {
-        if (!active) {
-          return
-        }
-        const previewer = init(host, { width: 960, height: 540 })
-        void Promise.resolve(previewer.preview(buffer)).catch((reason: unknown) => {
-          if (active) {
-            setError(reason instanceof Error ? reason.message : String(reason))
-          }
-        })
-      },
-      (reason: unknown) => {
-        if (active) {
-          setError(reason instanceof Error ? reason.message : String(reason))
-        }
-      }
-    )
-
-    return () => {
-      active = false
-      host.replaceChildren()
-    }
-  }, [buffer])
-
-  if (error) {
-    return (
-      <div className="flex h-full items-center justify-center p-6 text-sm text-destructive">
-        {error}
-      </div>
-    )
-  }
-
-  return (
-    <div className="h-full overflow-auto bg-muted p-6 scrollbar-editor">
-      <div ref={hostRef} className="mx-auto w-fit max-w-full" />
-    </div>
-  )
-}
-
 export default function OfficeDocumentViewer({
   content,
   filePath
@@ -166,7 +114,7 @@ export default function OfficeDocumentViewer({
     return <SpreadsheetView sheets={document.sheets} />
   }
   if (document.kind === 'pptx') {
-    return <PresentationView buffer={document.buffer} />
+    return <OfficePresentationView buffer={document.buffer} />
   }
   return (
     <div className="h-full overflow-auto bg-muted p-6 scrollbar-editor">
