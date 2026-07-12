@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react'
-import { Loader2, Presentation } from 'lucide-react'
+import { FileText, Loader2, Presentation } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { translate } from '@/i18n/i18n'
 import { parsePresentationText, type PresentationSlide } from './office-document-parse'
 
-const PPTX_PREVIEW_TIMEOUT_MS = 4_000
+const PPTX_SLOW_RENDER_NOTICE_MS = 10_000
 
 type PptxPreviewer = {
   preview: (buffer: ArrayBuffer) => Promise<unknown> | unknown
@@ -51,15 +52,31 @@ export function OfficePresentationView({ buffer }: { buffer: ArrayBuffer }): Rea
   const hostRef = React.useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null)
   const [rendered, setRendered] = useState(false)
+  const [slowRender, setSlowRender] = useState(false)
   const [fallback, setFallback] = useState<{
     reason: string | null
     slides: PresentationSlide[]
   } | null>(null)
 
+  const renderFallback = React.useCallback(
+    (reason: string | null): void => {
+      hostRef.current?.replaceChildren()
+      void parsePresentationText(buffer).then(
+        (slides) => setFallback({ reason, slides }),
+        (fallbackReason: unknown) => {
+          const fallbackMessage =
+            fallbackReason instanceof Error ? fallbackReason.message : String(fallbackReason)
+          setError(reason ? `${reason} ${fallbackMessage}` : fallbackMessage)
+        }
+      )
+    },
+    [buffer]
+  )
+
   useEffect(() => {
     let active = true
-    let previewCompleted = false
-    let timeoutId: ReturnType<typeof setTimeout> | null = null
+    let slowRenderTimer: ReturnType<typeof setTimeout> | null = null
+    let slideObserver: MutationObserver | null = null
     let previewer: PptxPreviewer | null = null
     const host = hostRef.current
     if (!host) {
@@ -68,6 +85,7 @@ export function OfficePresentationView({ buffer }: { buffer: ArrayBuffer }): Rea
     host.replaceChildren()
     setError(null)
     setRendered(false)
+    setSlowRender(false)
     setFallback(null)
 
     const clearWrapperBackground = (): void => {
@@ -76,36 +94,29 @@ export function OfficePresentationView({ buffer }: { buffer: ArrayBuffer }): Rea
         ?.style.setProperty('background', 'transparent')
     }
 
-    const renderFallback = (reason: string | null): void => {
-      previewCompleted = true
-      host.replaceChildren()
-      void parsePresentationText(buffer).then(
-        (slides) => {
-          if (active) {
-            setFallback({ reason, slides })
-          }
-        },
-        (fallbackReason: unknown) => {
-          if (active) {
-            const fallbackMessage =
-              fallbackReason instanceof Error ? fallbackReason.message : String(fallbackReason)
-            setError(reason ? `${reason} ${fallbackMessage}` : fallbackMessage)
-          }
-        }
-      )
+    const markRenderedIfSlideExists = (): boolean => {
+      if (host.querySelectorAll('.pptx-preview-slide-wrapper').length === 0) {
+        return false
+      }
+      clearWrapperBackground()
+      setRendered(true)
+      setSlowRender(false)
+      return true
     }
 
-    timeoutId = setTimeout(() => {
-      if (!active || previewCompleted) {
+    slideObserver = new MutationObserver(() => {
+      if (!active) {
         return
       }
-      renderFallback(
-        translate(
-          'auto.components.editor.OfficeDocumentViewer.renderFallback',
-          'PowerPoint visual preview did not finish. Showing extracted slide text instead.'
-        )
-      )
-    }, PPTX_PREVIEW_TIMEOUT_MS)
+      markRenderedIfSlideExists()
+    })
+    slideObserver.observe(host, { childList: true, subtree: true })
+
+    slowRenderTimer = setTimeout(() => {
+      if (active && !markRenderedIfSlideExists()) {
+        setSlowRender(true)
+      }
+    }, PPTX_SLOW_RENDER_NOTICE_MS)
 
     void import('pptx-preview').then(
       ({ init }) => {
@@ -119,10 +130,7 @@ export function OfficePresentationView({ buffer }: { buffer: ArrayBuffer }): Rea
             if (!active) {
               return
             }
-            previewCompleted = true
-            clearWrapperBackground()
-            if (host.querySelectorAll('.pptx-preview-slide-wrapper').length > 0) {
-              setRendered(true)
+            if (markRenderedIfSlideExists()) {
               return
             }
             renderFallback(
@@ -136,7 +144,6 @@ export function OfficePresentationView({ buffer }: { buffer: ArrayBuffer }): Rea
             if (!active) {
               return
             }
-            previewCompleted = true
             const message = reason instanceof Error ? reason.message : String(reason)
             renderFallback(
               `${translate(
@@ -163,13 +170,14 @@ export function OfficePresentationView({ buffer }: { buffer: ArrayBuffer }): Rea
 
     return () => {
       active = false
-      if (timeoutId) {
-        clearTimeout(timeoutId)
+      if (slowRenderTimer) {
+        clearTimeout(slowRenderTimer)
       }
+      slideObserver?.disconnect()
       previewer?.destroy?.()
       host.replaceChildren()
     }
-  }, [buffer])
+  }, [buffer, renderFallback])
 
   if (fallback) {
     return <PresentationTextFallback reason={fallback.reason} slides={fallback.slides} />
@@ -185,13 +193,44 @@ export function OfficePresentationView({ buffer }: { buffer: ArrayBuffer }): Rea
   return (
     <div className="relative h-full overflow-auto bg-muted p-6 scrollbar-editor">
       {!rendered ? (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-sm text-muted-foreground">
-          <div className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 shadow-xs">
-            <Loader2 className="size-4 animate-spin" />
-            {translate(
-              'auto.components.editor.OfficeDocumentViewer.renderingPresentation',
-              'Rendering presentation...'
-            )}
+        <div className="absolute inset-0 z-10 flex items-center justify-center text-sm text-muted-foreground">
+          <div className="flex max-w-sm flex-col items-center gap-3 rounded-md border border-border bg-background px-4 py-3 text-center shadow-xs">
+            <div className="flex items-center gap-2">
+              <Loader2 className="size-4 animate-spin" />
+              {translate(
+                'auto.components.editor.OfficeDocumentViewer.renderingPresentation',
+                'Rendering presentation...'
+              )}
+            </div>
+            {slowRender ? (
+              <>
+                <div className="text-xs text-muted-foreground">
+                  {translate(
+                    'auto.components.editor.OfficeDocumentViewer.stillRenderingPresentation',
+                    'This deck is still rendering visuals.'
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    renderFallback(
+                      translate(
+                        'auto.components.editor.OfficeDocumentViewer.manualTextFallback',
+                        'Showing extracted slide text.'
+                      )
+                    )
+                  }
+                >
+                  <FileText className="size-3.5" />
+                  {translate(
+                    'auto.components.editor.OfficeDocumentViewer.showExtractedText',
+                    'Show extracted text'
+                  )}
+                </Button>
+              </>
+            ) : null}
           </div>
         </div>
       ) : null}
