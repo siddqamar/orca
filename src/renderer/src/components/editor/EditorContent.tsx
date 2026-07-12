@@ -45,6 +45,7 @@ const ImageDiffViewer = lazy(() => import('./ImageDiffViewer'))
 const MermaidViewer = lazy(() => import('./MermaidViewer'))
 const CsvViewer = lazy(() => import('./CsvViewer'))
 const IpynbViewer = lazy(() => import('./IpynbViewer'))
+const OfficeDocumentViewer = lazy(() => import('./OfficeDocumentViewer'))
 
 // Why: stable no-op callbacks for read-only tabs so Monaco never routes a
 // content-change or save through the writable pipeline (and so we don't create
@@ -522,6 +523,9 @@ export function EditorContent({
       )
     }
     if (fc.isBinary) {
+      if (/\.(?:docx|pptx|xlsx)$/i.test(activeFile.filePath)) {
+        return <OfficeDocumentViewer content={fc.content} filePath={activeFile.filePath} />
+      }
       if (fc.isImage) {
         return (
           <div className={className}>

@@ -11985,6 +11985,11 @@
         },
         "richMarkdownSourceOwningCutFeedback": {
           "selectLessContent": "보존된 HTML 인용을 잘라내려면 더 적은 콘텐츠를 선택하거나 코드 모드를 사용하세요."
+        },
+        "OfficeDocumentViewer": {
+          "loading": "Loading document...",
+          "slide": "Slide",
+          "formatWarning": "Some document formatting could not be reproduced."
         }
       },
       "diff": {

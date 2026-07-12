@@ -11985,6 +11985,11 @@
         },
         "richMarkdownSourceOwningCutFeedback": {
           "selectLessContent": "Selecciona menos contenido o usa el modo de código para cortar citas HTML conservadas."
+        },
+        "OfficeDocumentViewer": {
+          "loading": "Loading document...",
+          "slide": "Slide",
+          "formatWarning": "Some document formatting could not be reproduced."
         }
       },
       "diff": {
