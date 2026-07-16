@@ -8,7 +8,7 @@ import { OfficePresentationView } from './OfficePresentationView'
 
 type ParsedDocument =
   | { kind: 'docx'; html: string; warnings: string[] }
-  | { kind: 'pptx'; buffer: ArrayBuffer }
+  | { kind: 'pptx'; buffer: ArrayBuffer; contentBase64: string }
   | { kind: 'xlsx'; sheets: SpreadsheetSheet[] }
 
 async function parseDocument(content: string, extension: string): Promise<ParsedDocument> {
@@ -23,7 +23,7 @@ async function parseDocument(content: string, extension: string): Promise<Parsed
     }
   }
   if (extension === 'pptx') {
-    return { kind: 'pptx', buffer }
+    return { kind: 'pptx', buffer, contentBase64: content }
   }
   return { kind: 'xlsx', sheets: await parseWorkbook(buffer) }
 }
@@ -114,7 +114,9 @@ export default function OfficeDocumentViewer({
     return <SpreadsheetView sheets={document.sheets} />
   }
   if (document.kind === 'pptx') {
-    return <OfficePresentationView buffer={document.buffer} />
+    return (
+      <OfficePresentationView buffer={document.buffer} contentBase64={document.contentBase64} />
+    )
   }
   return (
     <div className="h-full overflow-auto bg-muted p-6 scrollbar-editor">

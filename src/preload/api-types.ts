@@ -9,10 +9,11 @@ import type {
   HostedReviewProvider
 } from '../shared/hosted-review'
 import type { NativeFileDropPayload } from '../shared/native-file-drop'
+import type { TerminalTabCloseRequest, TerminalTabCloseResponse } from '../shared/terminal-tab-close'
 import type {
-  TerminalTabCloseRequest,
-  TerminalTabCloseResponse
-} from '../shared/terminal-tab-close'
+  NativePowerPointPreviewRequest,
+  NativePowerPointPreviewResult
+} from '../shared/powerpoint-preview'
 import type {
   LocalLogTailChangedPayload,
   LocalLogTailReadArgs,
@@ -912,6 +913,9 @@ export type AppApi = {
 
 export type PreloadApi = {
   app: AppApi
+  powerpointPreview?: {
+    render: (request: NativePowerPointPreviewRequest) => Promise<NativePowerPointPreviewResult>
+  }
   orcaProfiles: {
     list: () => Promise<OrcaProfileListResult>
     authStatus: () => Promise<OrcaProfileAuthStatus>

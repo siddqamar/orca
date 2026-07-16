@@ -3,6 +3,7 @@ import { FileText, Loader2, Presentation } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { translate } from '@/i18n/i18n'
 import { parsePresentationText, type PresentationSlide } from './office-document-parse'
+import { resolvePresentationPreviewBuffer } from './office-presentation-preview'
 
 const PPTX_SLOW_RENDER_NOTICE_MS = 10_000
 
@@ -48,8 +49,15 @@ function PresentationTextFallback({
   )
 }
 
-export function OfficePresentationView({ buffer }: { buffer: ArrayBuffer }): React.JSX.Element {
+export function OfficePresentationView({
+  buffer,
+  contentBase64
+}: {
+  buffer: ArrayBuffer
+  contentBase64: string
+}): React.JSX.Element {
   const hostRef = React.useRef<HTMLDivElement>(null)
+  const fallbackRequestedRef = React.useRef(false)
   const [error, setError] = useState<string | null>(null)
   const [rendered, setRendered] = useState(false)
   const [slowRender, setSlowRender] = useState(false)
@@ -60,6 +68,7 @@ export function OfficePresentationView({ buffer }: { buffer: ArrayBuffer }): Rea
 
   const renderFallback = React.useCallback(
     (reason: string | null): void => {
+      fallbackRequestedRef.current = true
       hostRef.current?.replaceChildren()
       void parsePresentationText(buffer).then(
         (slides) => setFallback({ reason, slides }),
@@ -83,6 +92,7 @@ export function OfficePresentationView({ buffer }: { buffer: ArrayBuffer }): Rea
       return
     }
     host.replaceChildren()
+    fallbackRequestedRef.current = false
     setError(null)
     setRendered(false)
     setSlowRender(false)
@@ -118,14 +128,20 @@ export function OfficePresentationView({ buffer }: { buffer: ArrayBuffer }): Rea
       }
     }, PPTX_SLOW_RENDER_NOTICE_MS)
 
-    void import('pptx-preview').then(
-      ({ init }) => {
+    void Promise.all([
+      resolvePresentationPreviewBuffer(contentBase64, buffer),
+      import('pptx-preview')
+    ]).then(
+      ([previewBuffer, { init }]) => {
+        if (fallbackRequestedRef.current) {
+          return
+        }
         if (!active) {
           return
         }
         previewer = init(host, { width: 960, height: 540 })
         clearWrapperBackground()
-        void Promise.resolve(previewer.preview(buffer)).then(
+        void Promise.resolve(previewer.preview(previewBuffer)).then(
           () => {
             if (!active) {
               return
@@ -177,7 +193,7 @@ export function OfficePresentationView({ buffer }: { buffer: ArrayBuffer }): Rea
       previewer?.destroy?.()
       host.replaceChildren()
     }
-  }, [buffer, renderFallback])
+  }, [buffer, contentBase64, renderFallback])
 
   if (fallback) {
     return <PresentationTextFallback reason={fallback.reason} slides={fallback.slides} />
