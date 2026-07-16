@@ -2,7 +2,13 @@ import React, { useEffect, useMemo, useState } from 'react'
 import DOMPurify from 'dompurify'
 import { FileText, Sheet } from 'lucide-react'
 import { translate } from '@/i18n/i18n'
-import { decodeBase64Document, parseWorkbook, type SpreadsheetSheet } from './office-document-parse'
+import {
+  decodeBase64Document,
+  parseWorkbook,
+  SPREADSHEET_PREVIEW_MAX_COLUMNS,
+  SPREADSHEET_PREVIEW_MAX_ROWS,
+  type SpreadsheetSheet
+} from './office-document-parse'
 import { getOfficeDocumentExtension } from './office-document-file'
 import { OfficePresentationView } from './OfficePresentationView'
 
@@ -31,7 +37,7 @@ async function parseDocument(content: string, extension: string): Promise<Parsed
 function SpreadsheetView({ sheets }: { sheets: SpreadsheetSheet[] }): React.JSX.Element {
   const [activeSheet, setActiveSheet] = useState(0)
   const sheet = sheets[activeSheet]
-  const columnCount = Math.max(0, ...(sheet?.rows.map((row) => row.length) ?? []))
+  const columnCount = sheet?.rows.reduce((maximum, row) => Math.max(maximum, row.length), 0) ?? 0
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="min-h-0 flex-1 overflow-auto scrollbar-editor">
@@ -55,6 +61,18 @@ function SpreadsheetView({ sheets }: { sheets: SpreadsheetSheet[] }): React.JSX.
           </tbody>
         </table>
       </div>
+      {sheet?.truncated ? (
+        <div className="border-t border-border bg-muted px-3 py-1.5 text-xs text-muted-foreground">
+          {translate(
+            'auto.components.editor.OfficeDocumentViewer.spreadsheetPreviewLimited',
+            'Preview limited to the first {{rows}} rows and {{columns}} columns.',
+            {
+              rows: SPREADSHEET_PREVIEW_MAX_ROWS,
+              columns: SPREADSHEET_PREVIEW_MAX_COLUMNS
+            }
+          )}
+        </div>
+      ) : null}
       <div className="flex gap-1 overflow-x-auto border-t border-border bg-muted p-1">
         {sheets.map((candidate, index) => (
           <button

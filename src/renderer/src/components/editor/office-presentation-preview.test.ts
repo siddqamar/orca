@@ -10,9 +10,17 @@ describe('resolvePresentationPreviewBuffer', () => {
       contentBase64: btoa('flattened')
     }))
 
-    const result = await resolvePresentationPreviewBuffer(btoa('original'), original, renderNative)
+    const result = await resolvePresentationPreviewBuffer(
+      btoa('original'),
+      original,
+      'preview-1',
+      renderNative
+    )
 
-    expect(renderNative).toHaveBeenCalledWith({ contentBase64: btoa('original') })
+    expect(renderNative).toHaveBeenCalledWith({
+      contentBase64: btoa('original'),
+      requestToken: 'preview-1'
+    })
     expect(new TextDecoder().decode(result)).toBe('flattened')
   })
 
@@ -28,7 +36,7 @@ describe('resolvePresentationPreviewBuffer', () => {
     const original = decodeBase64Document(btoa('original'))
 
     await expect(
-      resolvePresentationPreviewBuffer(btoa('original'), original, renderNative)
+      resolvePresentationPreviewBuffer(btoa('original'), original, 'preview-1', renderNative)
     ).resolves.toBe(original)
   })
 })

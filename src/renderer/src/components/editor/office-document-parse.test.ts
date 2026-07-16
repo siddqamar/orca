@@ -2,7 +2,13 @@
 import { describe, expect, it } from 'vitest'
 import ExcelJS from 'exceljs'
 import JSZip from 'jszip'
-import { decodeBase64Document, parsePresentationText, parseWorkbook } from './office-document-parse'
+import {
+  decodeBase64Document,
+  parsePresentationText,
+  parseWorkbook,
+  SPREADSHEET_PREVIEW_MAX_COLUMNS,
+  SPREADSHEET_PREVIEW_MAX_ROWS
+} from './office-document-parse'
 
 function toArrayBuffer(value: ArrayBuffer | Uint8Array): ArrayBuffer {
   if (value instanceof ArrayBuffer) {
@@ -31,9 +37,25 @@ describe('office document parsing', () => {
         rows: [
           ['Name', 'Count', 'Formula'],
           ['Orca', '3', '6']
-        ]
+        ],
+        truncated: false
       }
     ])
+  })
+
+  it('bounds sparse worksheets before materializing preview cells', async () => {
+    const workbook = new ExcelJS.Workbook()
+    const sheet = workbook.addWorksheet('Sparse')
+    sheet.getCell('A1').value = 'Visible'
+    sheet.getCell('CW10000').value = 'Outside preview'
+
+    const buffer = toArrayBuffer(await workbook.xlsx.writeBuffer())
+    const [parsed] = await parseWorkbook(buffer)
+
+    expect(parsed?.rows).toHaveLength(SPREADSHEET_PREVIEW_MAX_ROWS)
+    expect(parsed?.rows.every((row) => row.length === SPREADSHEET_PREVIEW_MAX_COLUMNS)).toBe(true)
+    expect(parsed?.rows[0]?.[0]).toBe('Visible')
+    expect(parsed?.truncated).toBe(true)
   })
 
   it('extracts fallback text from presentation slides', async () => {

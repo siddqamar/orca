@@ -7,6 +7,7 @@ import { preloadE2EConfig } from './e2e-config'
 import { glApi } from './gitlab'
 import type { AppIdentity } from '../shared/app-identity'
 import type {
+  NativePowerPointPreviewCancelRequest,
   NativePowerPointPreviewRequest,
   NativePowerPointPreviewResult
 } from '../shared/powerpoint-preview'
@@ -511,7 +512,9 @@ const api = {
   },
   powerpointPreview: {
     render: (request: NativePowerPointPreviewRequest): Promise<NativePowerPointPreviewResult> =>
-      ipcRenderer.invoke('powerpointPreview:render', request)
+      ipcRenderer.invoke('powerpointPreview:render', request),
+    cancel: (request: NativePowerPointPreviewCancelRequest): Promise<void> =>
+      ipcRenderer.invoke('powerpointPreview:cancel', request)
   } satisfies NonNullable<PreloadApi['powerpointPreview']>,
 
   orcaProfiles: {

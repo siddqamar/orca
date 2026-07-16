@@ -12,7 +12,8 @@ function createDependencies(platform: NodeJS.Platform = 'win32') {
       Buffer.concat([Buffer.from('PK'), Buffer.alloc(1_000)])
     ),
     removeDirectory: vi.fn(async (_path: string) => undefined),
-    runPowerShell: vi.fn(async (_args: string[]) => undefined)
+    runPowerShell: vi.fn(async (_args: string[], _signal?: AbortSignal) => undefined),
+    terminatePowerPointProcess: vi.fn(async (_path: string) => undefined)
   }
 }
 
@@ -25,7 +26,10 @@ describe('renderNativePowerPointPreview', () => {
     const dependencies = createDependencies('linux')
 
     await expect(
-      renderNativePowerPointPreview({ contentBase64: 'cHB0eA==' }, dependencies)
+      renderNativePowerPointPreview(
+        { contentBase64: 'cHB0eA==', requestToken: 'preview-1' },
+        dependencies
+      )
     ).resolves.toEqual({
       status: 'unavailable',
       reason: 'Native PowerPoint rendering is only available on Windows.'
@@ -41,7 +45,7 @@ describe('renderNativePowerPointPreview', () => {
 
     await expect(
       renderNativePowerPointPreview(
-        { contentBase64: Buffer.from('source').toString('base64') },
+        { contentBase64: Buffer.from('source').toString('base64'), requestToken: 'preview-1' },
         dependencies
       )
     ).resolves.toEqual({ status: 'rendered', contentBase64: preview.toString('base64') })
@@ -62,8 +66,14 @@ describe('renderNativePowerPointPreview', () => {
     dependencies.runPowerShell.mockRejectedValue(new Error('PowerPoint is not installed'))
 
     await expect(
-      renderNativePowerPointPreview({ contentBase64: 'cHB0eA==' }, dependencies)
+      renderNativePowerPointPreview(
+        { contentBase64: 'cHB0eA==', requestToken: 'preview-1' },
+        dependencies
+      )
     ).resolves.toEqual({ status: 'unavailable', reason: 'PowerPoint is not installed' })
+    expect(dependencies.terminatePowerPointProcess).toHaveBeenCalledWith(
+      expect.stringMatching(/powerpoint\.pid$/)
+    )
     expect(dependencies.removeDirectory).toHaveBeenCalledWith('C:\\temp\\orca-preview')
   })
 
@@ -72,10 +82,33 @@ describe('renderNativePowerPointPreview', () => {
     dependencies.readFile.mockResolvedValue(Buffer.alloc(1_001))
 
     await expect(
-      renderNativePowerPointPreview({ contentBase64: 'cHB0eA==' }, dependencies)
+      renderNativePowerPointPreview(
+        { contentBase64: 'cHB0eA==', requestToken: 'preview-1' },
+        dependencies
+      )
     ).resolves.toEqual({
       status: 'unavailable',
       reason: 'PowerPoint did not create a valid preview presentation.'
     })
+  })
+
+  it('passes cancellation to PowerShell and terminates the recorded PowerPoint process', async () => {
+    const dependencies = createDependencies()
+    const controller = new AbortController()
+    dependencies.runPowerShell.mockImplementation(async (_args, signal) => {
+      controller.abort()
+      if (signal?.aborted) {
+        throw new Error('The operation was aborted')
+      }
+    })
+
+    await renderNativePowerPointPreview(
+      { contentBase64: 'cHB0eA==', requestToken: 'preview-1' },
+      dependencies,
+      controller.signal
+    )
+
+    expect(dependencies.runPowerShell).toHaveBeenCalledWith(expect.any(Array), controller.signal)
+    expect(dependencies.terminatePowerPointProcess).toHaveBeenCalledOnce()
   })
 })

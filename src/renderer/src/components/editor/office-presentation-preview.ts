@@ -11,13 +11,14 @@ type NativePowerPointRenderer = (
 export async function resolvePresentationPreviewBuffer(
   contentBase64: string,
   originalBuffer: ArrayBuffer,
+  requestToken: string,
   renderNative: NativePowerPointRenderer | undefined = window.api.powerpointPreview?.render
 ): Promise<ArrayBuffer> {
   if (!renderNative) {
     return originalBuffer
   }
   try {
-    const result = await renderNative({ contentBase64 })
+    const result = await renderNative({ contentBase64, requestToken })
     return result.status === 'rendered'
       ? decodeBase64Document(result.contentBase64)
       : originalBuffer

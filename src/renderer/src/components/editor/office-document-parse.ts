@@ -4,7 +4,11 @@ import JSZip from 'jszip'
 export type SpreadsheetSheet = {
   name: string
   rows: string[][]
+  truncated: boolean
 }
+
+export const SPREADSHEET_PREVIEW_MAX_ROWS = 200
+export const SPREADSHEET_PREVIEW_MAX_COLUMNS = 100
 
 export type PresentationSlide = {
   number: number
@@ -46,16 +50,22 @@ export async function parseWorkbook(buffer: ArrayBuffer): Promise<SpreadsheetShe
 
   workbook.eachSheet((sheet) => {
     const rows: string[][] = []
-    sheet.eachRow({ includeEmpty: true }, (row) => {
+    const rowCount = Math.min(sheet.rowCount, SPREADSHEET_PREVIEW_MAX_ROWS)
+    const columnCount = Math.min(sheet.columnCount, SPREADSHEET_PREVIEW_MAX_COLUMNS)
+    for (let rowNumber = 1; rowNumber <= rowCount; rowNumber += 1) {
+      const row = sheet.getRow(rowNumber)
       const values: string[] = []
-      for (let column = 1; column <= sheet.columnCount; column += 1) {
+      for (let column = 1; column <= columnCount; column += 1) {
         values.push(stringifyCellValue(row.getCell(column).value))
       }
       rows.push(values)
-    })
+    }
     sheets.push({
       name: sheet.name,
-      rows
+      rows,
+      truncated:
+        sheet.rowCount > SPREADSHEET_PREVIEW_MAX_ROWS ||
+        sheet.columnCount > SPREADSHEET_PREVIEW_MAX_COLUMNS
     })
   })
 

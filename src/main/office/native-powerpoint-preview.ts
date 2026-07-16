@@ -20,7 +20,20 @@ type NativePowerPointPreviewDependencies = {
   writeFile: (path: string, content: string | Buffer) => Promise<void>
   readFile: (path: string) => Promise<Buffer>
   removeDirectory: (path: string) => Promise<void>
-  runPowerShell: (args: string[]) => Promise<void>
+  runPowerShell: (args: string[], signal?: AbortSignal) => Promise<void>
+  terminatePowerPointProcess: (processIdPath: string) => Promise<void>
+}
+
+async function terminateRecordedPowerPointProcess(processIdPath: string): Promise<void> {
+  try {
+    const processIdText = await readFile(processIdPath, 'utf8')
+    if (!/^\d+$/.test(processIdText.trim())) {
+      return
+    }
+    process.kill(Number(processIdText.trim()), 'SIGKILL')
+  } catch {
+    // The export script normally closes PowerPoint before Node needs to clean it up.
+  }
 }
 
 const defaultDependencies: NativePowerPointPreviewDependencies = {
@@ -39,13 +52,15 @@ const defaultDependencies: NativePowerPointPreviewDependencies = {
   removeDirectory: async (path) => {
     await rm(path, { recursive: true, force: true })
   },
-  runPowerShell: async (args) => {
+  runPowerShell: async (args, signal) => {
     await execFileAsync('powershell.exe', args, {
       timeout: POWERPOINT_EXPORT_TIMEOUT_MS,
       windowsHide: true,
-      maxBuffer: 1024 * 1024
+      maxBuffer: 1024 * 1024,
+      signal
     })
-  }
+  },
+  terminatePowerPointProcess: terminateRecordedPowerPointProcess
 }
 
 function unavailable(reason: unknown): NativePowerPointPreviewResult {
@@ -55,7 +70,8 @@ function unavailable(reason: unknown): NativePowerPointPreviewResult {
 
 export async function renderNativePowerPointPreview(
   request: NativePowerPointPreviewRequest,
-  dependencies: NativePowerPointPreviewDependencies = defaultDependencies
+  dependencies: NativePowerPointPreviewDependencies = defaultDependencies,
+  signal?: AbortSignal
 ): Promise<NativePowerPointPreviewResult> {
   if (dependencies.platform !== 'win32') {
     return unavailable('Native PowerPoint rendering is only available on Windows.')
@@ -65,38 +81,50 @@ export async function renderNativePowerPointPreview(
   }
 
   let temporaryDirectory: string | null = null
+  let processIdPath: string | null = null
   try {
     temporaryDirectory = await dependencies.createTemporaryDirectory()
     const inputPath = join(temporaryDirectory, 'source.pptx')
     const outputPath = join(temporaryDirectory, 'preview.pptx')
     const scriptPath = join(temporaryDirectory, 'render-preview.ps1')
     const imageDirectory = join(temporaryDirectory, 'slides')
+    processIdPath = join(temporaryDirectory, 'powerpoint.pid')
     await dependencies.createDirectory(imageDirectory)
     await Promise.all([
       dependencies.writeFile(inputPath, Buffer.from(request.contentBase64, 'base64')),
       dependencies.writeFile(scriptPath, NATIVE_POWERPOINT_PREVIEW_SCRIPT)
     ])
-    await dependencies.runPowerShell([
-      '-NoLogo',
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      scriptPath,
-      '-InputPath',
-      inputPath,
-      '-OutputPath',
-      outputPath,
-      '-ImageDirectory',
-      imageDirectory
-    ])
+    await dependencies.runPowerShell(
+      [
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        scriptPath,
+        '-InputPath',
+        inputPath,
+        '-OutputPath',
+        outputPath,
+        '-ImageDirectory',
+        imageDirectory,
+        '-ProcessIdPath',
+        processIdPath
+      ],
+      signal
+    )
     const preview = await dependencies.readFile(outputPath)
     if (preview.byteLength < MINIMUM_PREVIEW_BYTES || preview.subarray(0, 2).toString() !== 'PK') {
       throw new Error('PowerPoint did not create a valid preview presentation.')
     }
     return { status: 'rendered', contentBase64: preview.toString('base64') }
   } catch (error) {
+    if (processIdPath) {
+      // Why: killing the PowerShell wrapper does not terminate its out-of-process
+      // COM server, so cancel/error cleanup targets only the PID created here.
+      await dependencies.terminatePowerPointProcess(processIdPath)
+    }
     return unavailable(error)
   } finally {
     if (temporaryDirectory) {

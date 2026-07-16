@@ -58,6 +58,7 @@ export function OfficePresentationView({
 }): React.JSX.Element {
   const hostRef = React.useRef<HTMLDivElement>(null)
   const fallbackRequestedRef = React.useRef(false)
+  const nativeRequestTokenRef = React.useRef<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [rendered, setRendered] = useState(false)
   const [slowRender, setSlowRender] = useState(false)
@@ -69,6 +70,11 @@ export function OfficePresentationView({
   const renderFallback = React.useCallback(
     (reason: string | null): void => {
       fallbackRequestedRef.current = true
+      const requestToken = nativeRequestTokenRef.current
+      if (requestToken) {
+        nativeRequestTokenRef.current = null
+        void window.api.powerpointPreview?.cancel({ requestToken })
+      }
       hostRef.current?.replaceChildren()
       void parsePresentationText(buffer).then(
         (slides) => setFallback({ reason, slides }),
@@ -97,8 +103,12 @@ export function OfficePresentationView({
     setRendered(false)
     setSlowRender(false)
     setFallback(null)
+    const requestToken = crypto.randomUUID()
+    nativeRequestTokenRef.current = requestToken
 
     const clearWrapperBackground = (): void => {
+      // Why: pptx-preview owns these internal wrappers and otherwise paints an
+      // opaque canvas behind PowerPoint's flattened slide images.
       host
         .querySelector<HTMLElement>('.pptx-preview-wrapper')
         ?.style.setProperty('background', 'transparent')
@@ -129,10 +139,13 @@ export function OfficePresentationView({
     }, PPTX_SLOW_RENDER_NOTICE_MS)
 
     void Promise.all([
-      resolvePresentationPreviewBuffer(contentBase64, buffer),
+      resolvePresentationPreviewBuffer(contentBase64, buffer, requestToken),
       import('pptx-preview')
     ]).then(
       ([previewBuffer, { init }]) => {
+        if (nativeRequestTokenRef.current === requestToken) {
+          nativeRequestTokenRef.current = null
+        }
         if (fallbackRequestedRef.current) {
           return
         }
@@ -186,6 +199,10 @@ export function OfficePresentationView({
 
     return () => {
       active = false
+      if (nativeRequestTokenRef.current === requestToken) {
+        nativeRequestTokenRef.current = null
+        void window.api.powerpointPreview?.cancel({ requestToken })
+      }
       if (slowRenderTimer) {
         clearTimeout(slowRenderTimer)
       }

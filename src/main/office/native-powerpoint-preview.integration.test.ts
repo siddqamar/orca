@@ -28,46 +28,55 @@ try {
 } finally {
   if ($presentation -ne $null) { $presentation.Close() }
   if ($powerPoint -ne $null) { $powerPoint.Quit() }
+  if ($presentation -ne $null) { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($presentation) }
+  if ($powerPoint -ne $null) { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($powerPoint) }
+  [GC]::Collect()
+  [GC]::WaitForPendingFinalizers()
 }
 `
 
-runPowerPointIntegration('flattens a visual slide through installed PowerPoint', async () => {
-  const shortDirectory = await mkdtemp(join(tmpdir(), 'orca-pptx-integration-'))
-  const directory = await realpath(shortDirectory)
-  try {
-    const sourcePath = join(directory, 'visual-source.pptx')
-    const scriptPath = join(directory, 'create-visual-source.ps1')
-    await writeFile(scriptPath, CREATE_VISUAL_DECK_SCRIPT)
-    await execFileAsync(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-File',
-        scriptPath,
-        '-OutputPath',
-        sourcePath
-      ],
-      { timeout: 60_000, windowsHide: true }
-    )
-    const source = await readFile(sourcePath)
+runPowerPointIntegration(
+  'flattens a visual slide through installed PowerPoint',
+  async () => {
+    const shortDirectory = await mkdtemp(join(tmpdir(), 'orca-pptx-integration-'))
+    const directory = await realpath(shortDirectory)
+    try {
+      const sourcePath = join(directory, 'visual-source.pptx')
+      const scriptPath = join(directory, 'create-visual-source.ps1')
+      await writeFile(scriptPath, CREATE_VISUAL_DECK_SCRIPT)
+      await execFileAsync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          scriptPath,
+          '-OutputPath',
+          sourcePath
+        ],
+        { timeout: 60_000, windowsHide: true }
+      )
+      const source = await readFile(sourcePath)
 
-    const result = await renderNativePowerPointPreview({
-      contentBase64: source.toString('base64')
-    })
+      const result = await renderNativePowerPointPreview({
+        contentBase64: source.toString('base64'),
+        requestToken: 'integration-preview'
+      })
 
-    expect(result.status).toBe('rendered')
-    if (result.status !== 'rendered') {
-      return
+      expect(result.status).toBe('rendered')
+      if (result.status !== 'rendered') {
+        return
+      }
+      const archive = await JSZip.loadAsync(Buffer.from(result.contentBase64, 'base64'))
+      expect(Object.keys(archive.files)).toContain('ppt/media/image1.png')
+      expect(
+        Object.keys(archive.files).filter((path) => /^ppt\/slides\/slide\d+\.xml$/.test(path))
+      ).toHaveLength(1)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
     }
-    const archive = await JSZip.loadAsync(Buffer.from(result.contentBase64, 'base64'))
-    expect(Object.keys(archive.files)).toContain('ppt/media/image1.png')
-    expect(
-      Object.keys(archive.files).filter((path) => /^ppt\/slides\/slide\d+\.xml$/.test(path))
-    ).toHaveLength(1)
-  } finally {
-    await rm(directory, { recursive: true, force: true })
-  }
-})
+  },
+  300_000
+)

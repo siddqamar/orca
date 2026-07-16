@@ -11996,7 +11996,8 @@
           "stillRenderingPresentation": "This deck is still rendering visuals.",
           "manualTextFallback": "Showing extracted slide text.",
           "showExtractedText": "Show extracted text",
-          "formatWarning": "Some document formatting could not be reproduced."
+          "formatWarning": "Some document formatting could not be reproduced.",
+          "spreadsheetPreviewLimited": "Preview limited to the first {{rows}} rows and {{columns}} columns."
         }
       },
       "diff": {

@@ -4,7 +4,8 @@ export const NATIVE_POWERPOINT_PREVIEW_SCRIPT = String.raw`
 param(
   [Parameter(Mandatory = $true)][string]$InputPath,
   [Parameter(Mandatory = $true)][string]$OutputPath,
-  [Parameter(Mandatory = $true)][string]$ImageDirectory
+  [Parameter(Mandatory = $true)][string]$ImageDirectory,
+  [Parameter(Mandatory = $true)][string]$ProcessIdPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,7 +14,14 @@ $source = $null
 $preview = $null
 
 try {
+  $existingProcessIds = @(Get-Process -Name POWERPNT -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
   $powerPoint = New-Object -ComObject PowerPoint.Application
+  $createdProcess = Get-Process -Name POWERPNT -ErrorAction SilentlyContinue |
+    Where-Object { $existingProcessIds -notcontains $_.Id } |
+    Select-Object -First 1
+  if ($createdProcess -ne $null) {
+    [IO.File]::WriteAllText($ProcessIdPath, [string]$createdProcess.Id)
+  }
   $source = $powerPoint.Presentations.Open($InputPath, $true, $false, $false)
   $preview = $powerPoint.Presentations.Add($false)
 

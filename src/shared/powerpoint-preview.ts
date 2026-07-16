@@ -4,4 +4,9 @@ export type NativePowerPointPreviewResult =
 
 export type NativePowerPointPreviewRequest = {
   contentBase64: string
+  requestToken: string
+}
+
+export type NativePowerPointPreviewCancelRequest = {
+  requestToken: string
 }
