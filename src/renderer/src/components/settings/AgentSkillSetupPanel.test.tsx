@@ -196,6 +196,28 @@ describe('AgentSkillSetupPanel', () => {
     expect(container?.textContent).not.toContain('Install CLI & Skill')
   })
 
+  it('disables setup when PATH verification is unavailable', async () => {
+    const detail = 'Orca could not verify your user PATH. Refresh to try again.'
+    await renderInteractivePanel({
+      preInstallNotice: 'Install the Orca CLI before running agent skill setup.',
+      getPrerequisiteStatus: vi.fn(
+        async () =>
+          ({
+            state: 'not_installed',
+            pathConfigured: false,
+            pathConfigurationError: 'Windows PATH command timed out after 5000ms.',
+            detail
+          }) as Awaited<ReturnType<typeof window.api.cli.getInstallStatus>>
+      )
+    })
+
+    expect(findButton('Install').disabled).toBe(true)
+    expect(container?.textContent).toContain(detail)
+    expect(container?.textContent).not.toContain(
+      'Install the Orca CLI before running agent skill setup.'
+    )
+  })
+
   it('can hide install after the skill is detected', () => {
     const html = renderPanel({ installed: true, showInstallWhenInstalled: false })
 

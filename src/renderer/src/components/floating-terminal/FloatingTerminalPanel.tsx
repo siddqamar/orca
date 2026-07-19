@@ -32,6 +32,7 @@ import { detectLanguage } from '@/lib/language-detect'
 import { buildDuplicatedBrowserTabOptions } from '@/lib/duplicate-browser-tab-options'
 import { focusTerminalTabSurface } from '@/lib/focus-terminal-tab-surface'
 import { isOrcaCliAvailableOnPath } from '@/lib/agent-skill-cli-prerequisite'
+import { isCliPathVerificationUnavailable } from '../../../../shared/cli-install-types'
 import {
   isFloatingWorkspacePanelShortcut,
   isFloatingWorkspaceTerminalInputTarget,
@@ -611,7 +612,9 @@ export function FloatingTerminalPanel({
     try {
       const status = await window.api.cli.getInstallStatus()
       if (mountedRef.current) {
-        setShowOrchestrationSetup(!isOrcaCliAvailableOnPath(status))
+        setShowOrchestrationSetup(
+          !isCliPathVerificationUnavailable(status) && !isOrcaCliAvailableOnPath(status)
+        )
       }
     } catch {
       if (mountedRef.current) {

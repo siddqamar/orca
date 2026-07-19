@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { RefreshCw, TicketCheck, X } from 'lucide-react'
-import type { CliInstallStatus } from '../../../../shared/cli-install-types'
+import {
+  isCliPathVerificationUnavailable,
+  type CliInstallStatus
+} from '../../../../shared/cli-install-types'
 import type { ProjectExecutionRuntimeResolution } from '../../../../shared/project-execution-runtime'
 import { Button } from '@/components/ui/button'
 import {
@@ -183,8 +186,15 @@ export function LinearAgentSkillSetupPrompt({
   }, [refreshCliStatus])
 
   const cliAvailable = isOrcaCliAvailableOnPath(cliStatus)
+  const cliVerificationUnavailable = isCliPathVerificationUnavailable(cliStatus)
   const setupReady = linked && !cliLoading && !skill.loading && cliAvailable && skill.installed
-  const missingSetup = linked && !localDismissed && !cliLoading && !skill.loading && !setupReady
+  const missingSetup =
+    linked &&
+    !localDismissed &&
+    !cliLoading &&
+    !skill.loading &&
+    !cliVerificationUnavailable &&
+    !setupReady
   const explicitCheckMatchesContext = activeSetupCheckIdentity === setupCheckIdentity
   const showCheckingModal =
     surface === 'modal' &&

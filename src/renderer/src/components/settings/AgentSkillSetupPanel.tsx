@@ -11,6 +11,7 @@ import { useMountedRef } from '@/hooks/useMountedRef'
 import { isOrcaCliAvailableOnPath } from '@/lib/agent-skill-cli-prerequisite'
 import { cn } from '@/lib/utils'
 import { translate } from '@/i18n/i18n'
+import { isCliPathVerificationUnavailable } from '../../../../shared/cli-install-types'
 
 type AgentSkillSetupPanelVariant = 'card' | 'inline'
 type SkillPrerequisiteStatus = Awaited<ReturnType<typeof window.api.cli.getInstallStatus>>
@@ -93,6 +94,9 @@ export function AgentSkillSetupPanel({
   const [preInstallNoticeVisible, setPreInstallNoticeVisible] = useState(
     Boolean(preInstallNotice && !installed)
   )
+  const [prerequisiteUnavailableDetail, setPrerequisiteUnavailableDetail] = useState<string | null>(
+    null
+  )
   const mountedRef = useMountedRef()
   const readPrerequisiteStatus = useCallback(
     () => (getPrerequisiteStatus ?? window.api.cli.getInstallStatus)(),
@@ -114,7 +118,11 @@ export function AgentSkillSetupPanel({
       try {
         const status = await readPrerequisiteStatus()
         if (!canceled) {
-          setPreInstallNoticeVisible(!isPrerequisiteAvailable(status))
+          const unavailable = isCliPathVerificationUnavailable(status)
+          setPrerequisiteUnavailableDetail(
+            unavailable ? (status.detail ?? status.pathConfigurationError ?? null) : null
+          )
+          setPreInstallNoticeVisible(!unavailable && !isPrerequisiteAvailable(status))
         }
       } catch {
         if (!canceled) {
@@ -138,7 +146,11 @@ export function AgentSkillSetupPanel({
     try {
       const status = await readPrerequisiteStatus()
       if (mountedRef.current) {
-        setPreInstallNoticeVisible(!isPrerequisiteAvailable(status))
+        const unavailable = isCliPathVerificationUnavailable(status)
+        setPrerequisiteUnavailableDetail(
+          unavailable ? (status.detail ?? status.pathConfigurationError ?? null) : null
+        )
+        setPreInstallNoticeVisible(!unavailable && !isPrerequisiteAvailable(status))
       }
     } catch {
       if (mountedRef.current) {
@@ -197,7 +209,12 @@ export function AgentSkillSetupPanel({
               }
             })()
           }}
-          disabled={terminalOpen || installDisabled || terminalOpening}
+          disabled={
+            terminalOpen ||
+            installDisabled ||
+            prerequisiteUnavailableDetail !== null ||
+            terminalOpening
+          }
         >
           {terminalOpening ? (
             <Loader2 className="size-3.5 animate-spin" />
@@ -302,6 +319,11 @@ export function AgentSkillSetupPanel({
           <p className="text-[13px] leading-snug text-muted-foreground">{description}</p>
           {actionRow}
           {actionHint ? <div className="mt-2">{actionHint}</div> : null}
+          {prerequisiteUnavailableDetail ? (
+            <p className="mt-2 text-[12px] leading-snug text-muted-foreground">
+              {prerequisiteUnavailableDetail}
+            </p>
+          ) : null}
           {!installed && preInstallNotice && preInstallNoticeVisible ? (
             <p className="mt-3 text-[12px] leading-snug text-muted-foreground">
               {preInstallNotice}

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import type { CliInstallStatus } from '../../../../shared/cli-install-types'
+import {
+  isCliPathVerificationUnavailable,
+  type CliInstallStatus
+} from '../../../../shared/cli-install-types'
 import {
   ORCA_CLI_SKILL_INSTALL_COMMAND,
   ORCA_CLI_SKILL_NAME,
@@ -128,8 +131,10 @@ export function BrowserUseSetup({
   const cookiesImported = !!defaultProfile?.source
 
   const cliEnabled = isOrcaCliAvailableOnPath(cliStatus)
-  const cliPathNeedsAttention = cliStatus?.state === 'installed' && !cliStatus.pathConfigured
-  const cliSupported = cliStatus?.supported ?? false
+  const cliVerificationUnavailable = isCliPathVerificationUnavailable(cliStatus)
+  const cliPathNeedsAttention =
+    !cliVerificationUnavailable && cliStatus?.state === 'installed' && !cliStatus.pathConfigured
+  const cliSupported = (cliStatus?.supported ?? false) && !cliVerificationUnavailable
 
   const {
     installed: skillDetected,
@@ -181,7 +186,9 @@ export function BrowserUseSetup({
   const showStep3 = matchesSettingsSearch(searchQuery, [getBrowserUsePaneSearchEntries()[2]])
   const completedCount = [cliEnabled, skillDetected, cookiesImported].filter(Boolean).length
   const step2Blocked =
-    Boolean(activeSkillRuntime.installDisabledReason) || (!cliEnabled && !skillDetected)
+    cliVerificationUnavailable ||
+    Boolean(activeSkillRuntime.installDisabledReason) ||
+    (!cliEnabled && !skillDetected)
   const step3Blocked = !cookiesImported && (!cliEnabled || !skillDetected)
 
   const sourceLabel = defaultProfile?.source

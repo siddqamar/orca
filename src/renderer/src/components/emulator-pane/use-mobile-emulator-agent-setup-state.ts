@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import type { CliInstallStatus } from '../../../../shared/cli-install-types'
+import {
+  isCliPathVerificationUnavailable,
+  type CliInstallStatus
+} from '../../../../shared/cli-install-types'
 import { ORCA_CLI_SKILL_NAME } from '@/lib/agent-feature-install-commands'
 import {
   ensureOrcaCliAvailableForAgentSkillTerminal,
@@ -122,10 +125,11 @@ export function useMobileEmulatorAgentSetupState(enabled = true): {
   }, [enabled, refreshCliSkill, refreshCliStatus])
 
   const cliEnabled = isOrcaCliAvailableOnPath(cliInstallStatus)
+  const cliVerificationUnavailable = isCliPathVerificationUnavailable(cliInstallStatus)
   const cliPathNeedsAttention = getMobileEmulatorCliPathNeedsAttention(cliInstallStatus)
-  const cliSupported = cliInstallStatus?.supported ?? false
+  const cliSupported = (cliInstallStatus?.supported ?? false) && !cliVerificationUnavailable
   const completedCount = [cliEnabled, cliSkillInstalled].filter(Boolean).length
-  const step2Blocked = !cliEnabled && !cliSkillInstalled
+  const step2Blocked = cliVerificationUnavailable || (!cliEnabled && !cliSkillInstalled)
   const setupComplete = cliEnabled && cliSkillInstalled
   const statusReady = !cliLoading && !cliSkillLoading
 

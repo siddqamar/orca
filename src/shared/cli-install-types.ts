@@ -22,3 +22,9 @@ export type CliInstallStatus = {
   unsupportedReason: CliInstallUnsupportedReason | null
   detail: string | null
 }
+
+export function isCliPathVerificationUnavailable(
+  status: Pick<CliInstallStatus, 'pathConfigurationError'> | null | undefined
+): boolean {
+  return Boolean(status?.pathConfigurationError)
+}

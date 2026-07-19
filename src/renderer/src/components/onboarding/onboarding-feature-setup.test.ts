@@ -301,4 +301,26 @@ describe('onboarding feature setup runner', () => {
       installCli.mock.invocationCallOrder[0]
     )
   })
+
+  it('does not attempt CLI registration when PATH verification is unavailable', async () => {
+    const unavailableStatus: CliInstallStatus = {
+      ...INSTALLED_CLI_STATUS,
+      pathConfigured: false,
+      pathConfigurationError: 'Windows PATH command timed out after 5000ms.',
+      detail: 'Orca could not verify your user PATH. Refresh to try again.'
+    }
+    const deps = createDeps({
+      getCliStatus: vi.fn(async () => unavailableStatus)
+    })
+
+    const result = await runOnboardingFeatureSetup(
+      { browserUse: true, computerUse: false, orchestration: false, linearTickets: false },
+      deps
+    )
+
+    expect(result.cliTouched).toBe(false)
+    expect(result.warnings).toContainEqual({ featureId: 'cli', message: unavailableStatus.detail })
+    expect(deps.showCliRegistrationPrompt).not.toHaveBeenCalled()
+    expect(deps.installCli).not.toHaveBeenCalled()
+  })
 })

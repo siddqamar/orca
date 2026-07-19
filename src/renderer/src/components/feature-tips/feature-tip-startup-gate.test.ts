@@ -240,6 +240,17 @@ describe('feature tip startup gate', () => {
     expect(isCliFeatureTipCompleted(makeCliStatus({ pathConfigured: false }))).toBe(false)
   })
 
+  it('suppresses the CLI feature tip when PATH verification is unavailable', () => {
+    expect(
+      isCliFeatureTipCompleted(
+        makeCliStatus({
+          pathConfigured: false,
+          pathConfigurationError: 'Windows PATH command timed out after 5000ms.'
+        })
+      )
+    ).toBe(true)
+  })
+
   it('treats unsupported CLI setup as completed for feature tips', () => {
     expect(
       isCliFeatureTipCompleted(

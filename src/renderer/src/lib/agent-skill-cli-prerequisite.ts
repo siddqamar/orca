@@ -1,5 +1,8 @@
 import { toast } from 'sonner'
-import type { CliInstallStatus } from '../../../shared/cli-install-types'
+import {
+  isCliPathVerificationUnavailable,
+  type CliInstallStatus
+} from '../../../shared/cli-install-types'
 import { translate } from '@/i18n/i18n'
 
 type EnsureOrcaCliAvailableOptions = {
@@ -27,6 +30,11 @@ export async function ensureOrcaCliAvailableForAgentSkillTerminal({
     onStatusChange?.(status)
 
     if (!status.supported) {
+      showCliPrerequisiteWarning(status)
+      return status
+    }
+
+    if (isCliPathVerificationUnavailable(status)) {
       showCliPrerequisiteWarning(status)
       return status
     }
@@ -70,6 +78,17 @@ function delay(ms: number): Promise<void> {
 }
 
 function showCliPrerequisiteWarning(status: CliInstallStatus): void {
+  if (isCliPathVerificationUnavailable(status)) {
+    toast.warning(
+      translate(
+        'auto.lib.agent.skill.cli.prerequisite.2db0bd7515',
+        'Orca CLI registration is unavailable'
+      ),
+      { description: status.detail ?? status.pathConfigurationError }
+    )
+    return
+  }
+
   if (!status.supported) {
     toast.warning(
       translate(

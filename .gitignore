@@ -25,6 +25,7 @@ out/
 /build/
 release/
 native/**/.build/
+graphify-out/
 
 # pnpm
 .pnpm-store/

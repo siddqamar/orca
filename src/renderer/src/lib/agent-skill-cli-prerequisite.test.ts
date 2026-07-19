@@ -112,4 +112,34 @@ describe('ensureOrcaCliAvailableForAgentSkillTerminal', () => {
     await expect(pending).resolves.toBe(installed)
     expect(install).toHaveBeenCalledTimes(1)
   })
+
+  it('does not offer registration when PATH verification is unavailable', async () => {
+    const unavailable = cliStatus({
+      pathConfigured: false,
+      pathConfigurationError: 'Windows PATH command timed out after 5000ms.',
+      detail: 'Orca could not verify your user PATH. Refresh to try again.'
+    })
+    const getInstallStatus = vi.fn().mockResolvedValue(unavailable)
+    const install = vi.fn()
+
+    vi.stubGlobal('window', {
+      api: {
+        cli: {
+          getInstallStatus,
+          install
+        }
+      }
+    })
+
+    await expect(
+      ensureOrcaCliAvailableForAgentSkillTerminal({ registrationPromptDelayMs: 0 })
+    ).resolves.toBe(unavailable)
+
+    expect(install).not.toHaveBeenCalled()
+    expect(toast.message).not.toHaveBeenCalled()
+    expect(toast.warning).toHaveBeenCalledWith(
+      'Orca CLI registration is unavailable',
+      expect.objectContaining({ description: unavailable.detail })
+    )
+  })
 })

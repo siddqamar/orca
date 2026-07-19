@@ -1,4 +1,7 @@
-import type { CliInstallStatus } from '../../../../shared/cli-install-types'
+import {
+  isCliPathVerificationUnavailable,
+  type CliInstallStatus
+} from '../../../../shared/cli-install-types'
 import type {
   ComputerUsePermissionSetupResult,
   ComputerUsePermissionStatusResult
@@ -220,7 +223,13 @@ export async function runOnboardingFeatureSetup(
 
   try {
     const status = await deps.getCliStatus()
-    if (!status.supported) {
+    if (isCliPathVerificationUnavailable(status)) {
+      warnings.push({
+        featureId: 'cli',
+        message:
+          status.detail ?? status.pathConfigurationError ?? 'Orca could not verify your user PATH.'
+      })
+    } else if (!status.supported) {
       warnings.push({
         featureId: 'cli',
         message: status.detail ?? 'Orca CLI registration is not available on this platform.'
