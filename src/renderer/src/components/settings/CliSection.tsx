@@ -286,11 +286,16 @@ export function CliSection({
               <button
                 role="switch"
                 aria-checked={isEnabled}
-                disabled={loading || !isSupported || busyAction !== null}
+                disabled={
+                  loading ||
+                  !isSupported ||
+                  Boolean(status?.pathConfigurationError) ||
+                  busyAction !== null
+                }
                 onClick={() => setDialogOpen(true)}
                 className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-transparent transition-colors ${
                   isEnabled ? 'bg-foreground' : 'bg-muted-foreground/30'
-                } ${loading || !isSupported || busyAction !== null ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
+                } ${loading || !isSupported || status?.pathConfigurationError || busyAction !== null ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
               >
                 <span
                   className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${

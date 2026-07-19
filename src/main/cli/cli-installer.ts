@@ -18,6 +18,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { promisify } from 'node:util'
 import type { CliInstallMethod, CliInstallStatus } from '../../shared/cli-install-types'
 import { buildAppImageCliWrapper } from './appimage-cli-wrapper'
+import { readWindowsUserPath, writeWindowsUserPath } from './windows-user-path'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_MAC_COMMAND_PATH = '/usr/local/bin/orca'
@@ -25,7 +26,10 @@ const DEV_COMMAND_NAME = 'orca-dev'
 const LINUX_COMMAND_NAME = 'orca-ide'
 const LEGACY_LINUX_COMMAND_NAME = 'orca'
 const DEV_LAUNCHER_DIR = ['cli', 'bin']
-const WINDOWS_PATH_COMMAND_TIMEOUT_MS = 5_000
+
+type GetStatusOptions = {
+  failOnPathReadError?: boolean
+}
 
 type CliInstallerOptions = {
   platform?: NodeJS.Platform
@@ -113,7 +117,7 @@ export class CliInstaller {
         : null
   }
 
-  async getStatus(): Promise<CliInstallStatus> {
+  async getStatus(options: GetStatusOptions = {}): Promise<CliInstallStatus> {
     const defaultSpec = this.resolveInstallSpec()
     if (!defaultSpec) {
       return {
@@ -164,12 +168,24 @@ export class CliInstaller {
           ? await this.inspectAppImageWrapper(spec.commandPath, launcherPath)
           : await this.inspectWindowsWrapper(spec.commandPath, launcherPath)
     const pathDirectory = dirname(spec.commandPath)
-    const pathConfigured = await this.isPathConfigured(pathDirectory)
-    return this.withPathInfo(baseStatus, pathDirectory, pathConfigured)
+    try {
+      const pathConfigured = await this.isPathConfigured(pathDirectory)
+      return this.withPathInfo(baseStatus, pathDirectory, pathConfigured)
+    } catch (error) {
+      if (options.failOnPathReadError) {
+        throw error
+      }
+      // Why: status is advisory UI data; an unavailable PATH source must not reject Settings IPC.
+      return {
+        ...this.withPathInfo(baseStatus, pathDirectory, false),
+        pathConfigurationError: error instanceof Error ? error.message : String(error),
+        detail: 'Orca could not verify your user PATH. Refresh to try again.'
+      }
+    }
   }
 
   async install(): Promise<CliInstallStatus> {
-    const status = await this.getStatus()
+    const status = await this.getStatus({ failOnPathReadError: true })
     if (!status.supported || !status.commandPath || !status.launcherPath || !status.installMethod) {
       throw new Error(status.detail ?? 'CLI registration is unavailable on this build.')
     }
@@ -203,11 +219,11 @@ export class CliInstaller {
       await this.ensureWindowsPathEntry(dirname(status.commandPath))
     }
 
-    return this.getStatus()
+    return this.getStatus({ failOnPathReadError: true })
   }
 
   async remove(): Promise<CliInstallStatus> {
-    const status = await this.getStatus()
+    const status = await this.getStatus({ failOnPathReadError: true })
     if (!status.supported || !status.commandPath || !status.launcherPath || !status.installMethod) {
       return status
     }
@@ -215,7 +231,7 @@ export class CliInstaller {
       await this.removeLegacyLinuxCommandIfManaged(status.launcherPath)
       if (this.platform === 'win32') {
         await this.removeWindowsPathEntry(dirname(status.commandPath))
-        return this.getStatus()
+        return this.getStatus({ failOnPathReadError: true })
       }
       return status
     }
@@ -236,7 +252,7 @@ export class CliInstaller {
       await this.removeWindowsPathEntry(dirname(status.commandPath))
     }
 
-    return this.getStatus()
+    return this.getStatus({ failOnPathReadError: true })
   }
 
   private resolveInstallSpec(): InstallSpec | null {
@@ -1106,72 +1122,6 @@ function isAbsoluteForPlatform(platform: NodeJS.Platform, value: string): boolea
     return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\')
   }
   return isAbsolute(value)
-}
-
-async function readWindowsUserPath(): Promise<string | null> {
-  const stdout = await runWindowsPathCommand([
-    '-NoProfile',
-    '-Command',
-    "[Environment]::GetEnvironmentVariable('Path','User')"
-  ])
-  return stdout.trim() || null
-}
-
-async function writeWindowsUserPath(value: string): Promise<void> {
-  await runWindowsPathCommand([
-    '-NoProfile',
-    '-Command',
-    // Why: PATH registration must stay user-scoped on Windows so the Orca
-    // desktop app can manage the public shell command without requiring
-    // elevation or mutating machine-wide environment state.
-    `[Environment]::SetEnvironmentVariable('Path', ${quotePowerShell(value)}, 'User')`
-  ])
-}
-
-function runWindowsPathCommand(args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let child: ReturnType<typeof execFile> | null = null
-    let settled = false
-
-    const finish = (error: Error | null, stdout = ''): void => {
-      if (settled) {
-        return
-      }
-      settled = true
-      clearTimeout(timeout)
-      if (error) {
-        reject(error)
-        return
-      }
-      resolve(stdout)
-    }
-
-    // Why: Windows PATH reads/writes back CLI Settings; wedged PowerShell must
-    // not keep command registration status or install/remove pending forever.
-    const timeout = setTimeout(() => {
-      child?.kill()
-      finish(
-        new Error(`Windows PATH command timed out after ${WINDOWS_PATH_COMMAND_TIMEOUT_MS}ms.`)
-      )
-    }, WINDOWS_PATH_COMMAND_TIMEOUT_MS)
-
-    try {
-      child = execFile(
-        'powershell',
-        args,
-        { encoding: 'utf8', timeout: WINDOWS_PATH_COMMAND_TIMEOUT_MS },
-        (error, stdout) => {
-          finish(error ?? null, stdout)
-        }
-      )
-    } catch (error) {
-      finish(error instanceof Error ? error : new Error(String(error)))
-    }
-  })
-}
-
-function quotePowerShell(value: string): string {
-  return `'${value.replaceAll("'", "''")}'`
 }
 
 export function getBundledLauncherPath(

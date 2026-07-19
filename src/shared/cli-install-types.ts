@@ -13,6 +13,7 @@ export type CliInstallStatus = {
   commandPath: string | null
   pathDirectory: string | null
   pathConfigured: boolean
+  pathConfigurationError?: string | null
   launcherPath: string | null
   installMethod: CliInstallMethod | null
   supported: boolean
