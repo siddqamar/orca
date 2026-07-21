@@ -4,7 +4,10 @@ import {
   commitRichMarkdownSerialization,
   type RichMarkdownReconcileRefs
 } from './rich-markdown-serialization-commit'
-import { handleRichMarkdownSaveShortcut } from './rich-markdown-save-shortcut'
+import {
+  handleRichMarkdownSaveShortcut,
+  installRichMarkdownSaveShortcut
+} from './rich-markdown-save-shortcut'
 import type { KeyHandlerContext } from './rich-markdown-key-handler'
 
 // Style-only canonicalizer mirroring the #6080 rewrites; stands in for the live
@@ -161,6 +164,23 @@ describe('handleRichMarkdownSaveShortcut (Cmd/Ctrl+S persistence site)', () => {
     expect(onContentChange).toHaveBeenCalledWith('# Title!\n\n_word_\n')
   })
 
+  it('flushes then saves SOURCE-PRESERVING bytes on Ctrl+S (Windows)', () => {
+    vi.stubGlobal('navigator', { userAgent: 'Windows NT 10.0; Win64; x64' })
+    const editor = fakeEditor(() => '# Title!\n\n*word*')
+    const { ctx, onSave, onContentChange, flush } = saveContext(editor)
+    const event = {
+      ...saveEvent(),
+      metaKey: false,
+      ctrlKey: true
+    } as KeyboardEvent & { preventDefault: ReturnType<typeof vi.fn> }
+
+    expect(handleRichMarkdownSaveShortcut(ctx, event)).toBe(true)
+    expect(event.preventDefault).toHaveBeenCalled()
+    expect(flush).toHaveBeenCalledTimes(1)
+    expect(onSave).toHaveBeenCalledWith('# Title!\n\n_word_\n')
+    expect(onContentChange).toHaveBeenCalledWith('# Title!\n\n_word_\n')
+  })
+
   it('ignores non-save keystrokes and touches nothing', () => {
     vi.stubGlobal('navigator', { userAgent: 'Macintosh' })
     const editor = fakeEditor(() => '# Title!\n\n*word*')
@@ -172,5 +192,39 @@ describe('handleRichMarkdownSaveShortcut (Cmd/Ctrl+S persistence site)', () => {
     expect(handleRichMarkdownSaveShortcut(ctx, event)).toBe(false)
     expect(flush).not.toHaveBeenCalled()
     expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it('captures Windows Ctrl+S at the rich editor surface', () => {
+    vi.stubGlobal('navigator', { userAgent: 'Windows NT 10.0; Win64; x64' })
+    const editor = fakeEditor(() => '# Title!\n\n*word*')
+    const { ctx, onSave, onContentChange, flush } = saveContext(editor)
+    const listeners = new Map<string, EventListener>()
+    const target = {
+      addEventListener: (_type: string, listener: EventListener) => {
+        listeners.set('keydown', listener)
+      },
+      removeEventListener: (_type: string, listener: EventListener) => {
+        if (listeners.get('keydown') === listener) {
+          listeners.delete('keydown')
+        }
+      }
+    } as unknown as HTMLElement
+    const cleanup = installRichMarkdownSaveShortcut(target, ctx)
+    const event = {
+      ...saveEvent(),
+      metaKey: false,
+      ctrlKey: true,
+      stopPropagation: vi.fn()
+    } as unknown as KeyboardEvent
+
+    listeners.get('keydown')?.(event)
+
+    expect(event.preventDefault).toHaveBeenCalled()
+    expect(event.stopPropagation).toHaveBeenCalled()
+    expect(flush).toHaveBeenCalledTimes(1)
+    expect(onContentChange).toHaveBeenCalledWith('# Title!\n\n_word_\n')
+    expect(onSave).toHaveBeenCalledWith('# Title!\n\n_word_\n')
+    cleanup()
+    expect(listeners.size).toBe(0)
   })
 })

@@ -17,6 +17,7 @@ import { useRichMarkdownMenuController } from './useRichMarkdownMenuController'
 import { useRichMarkdownProgrammaticSync } from './useRichMarkdownProgrammaticSync'
 import { useRichMarkdownReconcileRoundTrip } from './useRichMarkdownReconcileRoundTrip'
 import { commitRichMarkdownSerialization } from './rich-markdown-serialization-commit'
+import { useRichMarkdownSaveShortcut } from './useRichMarkdownSaveShortcut'
 import { useRichMarkdownReviewController } from './useRichMarkdownReviewController'
 import { useRichMarkdownReviewEditorEffects } from './useRichMarkdownReviewEditorEffects'
 import {
@@ -266,15 +267,17 @@ export default function RichMarkdownEditor({
       getSelectedHtmlSuperscriptLinkStatus(snapshot.editor, htmlSuperscriptLinkContext)
   })
   useRichMarkdownSpellcheckAttribute(editor, richMarkdownSpellcheckEnabled)
-
-  // Why: use useLayoutEffect (synchronous cleanup) so the pending serialization
-  // flush runs before useEditor's cleanup destroys the editor instance on tab
-  // switch or mode change. React runs layout-effect cleanups before effect
-  // cleanups, guaranteeing the editor is still alive when we serialize.
-  React.useLayoutEffect(() => {
-    return flushPendingSerialization
-  }, [flushPendingSerialization])
-
+  useRichMarkdownSaveShortcut({
+    rootRef,
+    editorRef,
+    originalSourceRef,
+    baseCanonicalRef,
+    lastCommittedMarkdownRef,
+    reconcileRoundTripRef,
+    onContentChangeRef,
+    onSaveRef,
+    flushPendingSerialization
+  })
   useEditorScrollRestore(scrollContainerRef, scrollCacheKey, editor)
 
   useModifierHeldClass(rootRef, isMac)
