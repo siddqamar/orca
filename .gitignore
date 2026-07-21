@@ -70,6 +70,7 @@ prod-release-scan-*.md
 # Temp
 tmp/
 .tmp/
+graphify-out/
 design-docs/
 .context/
 .atl/

@@ -137,11 +137,14 @@ export function getLocalAgentPreflightContext(
   appPlatform: NodeJS.Platform = getRendererAppPlatform(),
   wslContext: LocalProjectRuntimeWslContext = getCachedLocalProjectRuntimeWslContext()
 ): LocalPreflightContext {
+  // Why: a failed capability read reports unavailable, but WSL agent detection
+  // can still verify the selected distro directly through wsl.exe.
+  const agentDetectionWslContext = wslContext.wslAvailable === false ? {} : wslContext
   const projectRuntime = getLocalProjectExecutionRuntimeContext(
     state,
     undefined,
     appPlatform,
-    wslContext
+    agentDetectionWslContext
   )
   if (projectRuntime) {
     return getProjectRuntimePreflightContext(projectRuntime)
@@ -161,7 +164,7 @@ export function getLocalAgentPreflightContext(
         projectId: getLocalPreflightProjectId(state),
         projectRuntimePreference: { kind: 'inherit-global' },
         globalWindowsRuntimeDefault: state.settings.localWindowsRuntimeDefault,
-        ...wslContext
+        ...agentDetectionWslContext
       })
     )
   }

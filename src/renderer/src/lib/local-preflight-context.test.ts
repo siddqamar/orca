@@ -274,6 +274,36 @@ describe('local preflight context', () => {
     expect(localPreflightContextKey(context)).toBe('repo-1:wsl:Ubuntu')
   })
 
+  it('keeps WSL agent detection probeable when capability loading failed', () => {
+    const state = {
+      ...makeState({ repoPath: 'C:\\Users\\alice\\repo' }),
+      settings: {
+        localAgentRuntime: 'wsl',
+        localAgentWslDistro: 'Ubuntu'
+      }
+    } as AppState
+
+    const context = getLocalAgentPreflightContext(state, 'win32', {
+      wslAvailable: false,
+      availableWslDistros: []
+    })
+
+    expect(context).toEqual({
+      wslDistro: 'Ubuntu',
+      projectRuntime: {
+        status: 'resolved',
+        runtime: {
+          kind: 'wsl',
+          hostPlatform: 'wsl',
+          projectId: 'repo-1',
+          distro: 'Ubuntu',
+          reason: 'global-default',
+          cacheKey: 'repo-1:wsl:Ubuntu'
+        }
+      }
+    })
+  })
+
   it('ignores stale terminal WSL settings when no Windows project runtime is available', () => {
     const state = {
       ...makeState({ repoPath: 'C:\\Users\\alice\\repo' }),
