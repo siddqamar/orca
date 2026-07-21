@@ -290,6 +290,7 @@ describe('local preflight context', () => {
 
     expect(context).toEqual({
       wslDistro: 'Ubuntu',
+      runtimeContextKey: 'repo-1:wsl:Ubuntu:wsl-capability-unknown',
       projectRuntime: {
         status: 'resolved',
         runtime: {
@@ -302,6 +303,7 @@ describe('local preflight context', () => {
         }
       }
     })
+    expect(localPreflightContextKey(context)).toBe('repo-1:wsl:Ubuntu:wsl-capability-unknown')
   })
 
   it('ignores stale terminal WSL settings when no Windows project runtime is available', () => {

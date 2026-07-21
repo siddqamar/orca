@@ -139,7 +139,8 @@ export function getLocalAgentPreflightContext(
 ): LocalPreflightContext {
   // Why: a failed capability read reports unavailable, but WSL agent detection
   // can still verify the selected distro directly through wsl.exe.
-  const agentDetectionWslContext = wslContext.wslAvailable === false ? {} : wslContext
+  const wslCapabilityUnknown = wslContext.wslAvailable === false
+  const agentDetectionWslContext = wslCapabilityUnknown ? {} : wslContext
   const projectRuntime = getLocalProjectExecutionRuntimeContext(
     state,
     undefined,
@@ -147,7 +148,7 @@ export function getLocalAgentPreflightContext(
     agentDetectionWslContext
   )
   if (projectRuntime) {
-    return getProjectRuntimePreflightContext(projectRuntime)
+    return getAgentDetectionRuntimeContext(projectRuntime, wslCapabilityUnknown)
   }
 
   if (
@@ -158,20 +159,21 @@ export function getLocalAgentPreflightContext(
   ) {
     // Why: Settings -> Agents is global and can mount before any project is
     // active; still respect the Windows/WSL runtime default for PATH detection.
-    return getProjectRuntimePreflightContext(
+    return getAgentDetectionRuntimeContext(
       resolveProjectExecutionRuntime({
         appPlatform: 'win32',
         projectId: getLocalPreflightProjectId(state),
         projectRuntimePreference: { kind: 'inherit-global' },
         globalWindowsRuntimeDefault: state.settings.localWindowsRuntimeDefault,
         ...agentDetectionWslContext
-      })
+      }),
+      wslCapabilityUnknown
     )
   }
 
   const explicitAgentRuntime = appPlatform === 'win32' ? state.settings?.localAgentRuntime : null
   if (explicitAgentRuntime === 'host') {
-    return getProjectRuntimePreflightContext(
+    return getAgentDetectionRuntimeContext(
       resolveProjectExecutionRuntime({
         appPlatform: 'win32',
         projectId: getLocalPreflightProjectId(state),
@@ -179,13 +181,14 @@ export function getLocalAgentPreflightContext(
         globalWindowsRuntimeDefault: deriveGlobalWindowsRuntimeDefaultFromLegacySettings(
           state.settings
         ).defaultRuntime
-      })
+      }),
+      wslCapabilityUnknown
     )
   }
   if (explicitAgentRuntime === 'wsl') {
     const explicitDistro = state.settings?.localAgentWslDistro?.trim()
     if (explicitDistro) {
-      return getProjectRuntimePreflightContext(
+      return getAgentDetectionRuntimeContext(
         resolveProjectExecutionRuntime({
           appPlatform: 'win32',
           projectId: getLocalPreflightProjectId(state),
@@ -193,10 +196,11 @@ export function getLocalAgentPreflightContext(
           globalWindowsRuntimeDefault: deriveGlobalWindowsRuntimeDefaultFromLegacySettings(
             state.settings
           ).defaultRuntime
-        })
+        }),
+        wslCapabilityUnknown
       )
     }
-    return getProjectRuntimePreflightContext(
+    return getAgentDetectionRuntimeContext(
       resolveProjectExecutionRuntime({
         appPlatform: 'win32',
         projectId: getLocalPreflightProjectId(state),
@@ -204,7 +208,8 @@ export function getLocalAgentPreflightContext(
         globalWindowsRuntimeDefault: deriveGlobalWindowsRuntimeDefaultFromLegacySettings(
           state.settings
         ).defaultRuntime
-      })
+      }),
+      wslCapabilityUnknown
     )
   }
 
@@ -213,6 +218,18 @@ export function getLocalAgentPreflightContext(
     return getWslPreflightContext(wslDistro)
   }
   return undefined
+}
+
+function getAgentDetectionRuntimeContext(
+  resolution: ProjectExecutionRuntimeResolution,
+  wslCapabilityUnknown: boolean
+): NonNullable<LocalPreflightContext> {
+  // Why: capability recovery must invalidate an empty detection snapshot.
+  const runtimeContextKey =
+    wslCapabilityUnknown && resolution.status === 'resolved' && resolution.runtime.kind === 'wsl'
+      ? `${resolution.runtime.cacheKey}:wsl-capability-unknown`
+      : undefined
+  return getProjectRuntimePreflightContext(resolution, runtimeContextKey)
 }
 
 function getCachedLocalProjectRuntimeWslContext(): LocalProjectRuntimeWslContext {
