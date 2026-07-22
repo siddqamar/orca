@@ -1,5 +1,6 @@
 import type { BrowserGrabRect, BrowserGrabScreenshot } from '../../shared/browser-grab-types'
 import { GRAB_BUDGET } from '../../shared/browser-grab-types'
+import { executeBrowserGrabScript } from './browser-grab-script-executor'
 
 const HIDE_BROWSER_GRAB_OVERLAY_SCRIPT = `(function(){
   var g = window.__orcaGrab;
@@ -44,12 +45,12 @@ export async function captureSelectionScreenshot(
     // label don't appear in the screenshot. The overlay is restored after.
     // Wrapped in try/finally so the overlay is always restored even if
     // capturePage() throws (e.g., guest destroyed mid-capture).
-    await guest.executeJavaScript(HIDE_BROWSER_GRAB_OVERLAY_SCRIPT).catch(() => {})
+    await executeBrowserGrabScript(guest, HIDE_BROWSER_GRAB_OVERLAY_SCRIPT).catch(() => {})
     let image: Electron.NativeImage
     try {
       image = await guest.capturePage()
     } finally {
-      await guest.executeJavaScript(RESTORE_BROWSER_GRAB_OVERLAY_SCRIPT).catch(() => {})
+      await executeBrowserGrabScript(guest, RESTORE_BROWSER_GRAB_OVERLAY_SCRIPT).catch(() => {})
     }
     if (image.isEmpty()) {
       return null

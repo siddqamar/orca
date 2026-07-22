@@ -25,6 +25,7 @@ import type {
 } from '../../shared/browser-grab-types'
 import { buildGuestOverlayScript } from './grab-guest-script'
 import { clampGrabPayload } from './browser-grab-payload'
+import { executeBrowserGrabScript } from './browser-grab-script-executor'
 import { captureSelectionScreenshot as captureGrabSelectionScreenshot } from './browser-grab-screenshot'
 import { BrowserGrabSessionController } from './browser-grab-session-controller'
 import { browserDownloadDestinationReservations } from './browser-download-destination'
@@ -1612,7 +1613,7 @@ export class BrowserManager {
     }
     // Why: inject the overlay runtime eagerly on arm so the hover UI appears instantly; re-injection is idempotent/safe.
     try {
-      await guest.executeJavaScript(buildGuestOverlayScript('arm'))
+      await executeBrowserGrabScript(guest, buildGuestOverlayScript('arm'))
       return true
     } catch {
       return false
@@ -1652,7 +1653,10 @@ export class BrowserManager {
     guest: Electron.WebContents
   ): Promise<BrowserGrabPayload | null> {
     try {
-      const rawPayload = await guest.executeJavaScript(buildGuestOverlayScript('extractHover'))
+      const rawPayload = await executeBrowserGrabScript(
+        guest,
+        buildGuestOverlayScript('extractHover')
+      )
       if (!rawPayload || typeof rawPayload !== 'object') {
         return null
       }

@@ -1,6 +1,7 @@
 import type { BrowserGrabCancelReason, BrowserGrabResult } from '../../shared/browser-grab-types'
 import { buildGuestOverlayScript } from './grab-guest-script'
 import { clampGrabPayload } from './browser-grab-payload'
+import { executeBrowserGrabScript } from './browser-grab-script-executor'
 
 /** Tracks the lifecycle of a single grab operation on one browser tab. */
 type ActiveGrabOp = {
@@ -123,13 +124,14 @@ export class BrowserGrabSessionController {
         resolve(result)
       }
 
-      // Why: the guest overlay runtime handles the click in-page and calls
-      // __orcaGrabResolve() which is wired by the 'awaitClick' script to
-      // resolve the executeJavaScript Promise with the extracted payload.
-      // Main just needs to run that script and await its result.
+      // Why: the guest overlay runtime handles the click in the isolated world
+      // and resolves the await-click script with the extracted payload.
       const awaitGuestClick = async (): Promise<void> => {
         try {
-          const rawPayload = await guest.executeJavaScript(buildGuestOverlayScript('awaitClick'))
+          const rawPayload = await executeBrowserGrabScript(
+            guest,
+            buildGuestOverlayScript('awaitClick')
+          )
           if (!rawPayload || typeof rawPayload !== 'object') {
             settleOnce({ opId, kind: 'cancelled', reason: 'user' })
             return
@@ -213,7 +215,7 @@ export class BrowserGrabSessionController {
         }
         try {
           if (!guest.isDestroyed()) {
-            void guest.executeJavaScript(buildGuestOverlayScript('teardown'))
+            void executeBrowserGrabScript(guest, buildGuestOverlayScript('teardown'))
           }
         } catch {
           // Best-effort overlay removal

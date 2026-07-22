@@ -5,6 +5,7 @@ mock setup and make it harder to verify the grab contract holistically. */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { GRAB_BUDGET } from '../../shared/browser-grab-types'
 import type { BrowserGrabPayload } from '../../shared/browser-grab-types'
+import { BROWSER_GRAB_WORLD_ID } from './browser-grab-script-executor'
 
 const {
   webContentsFromIdMock,
@@ -177,13 +178,17 @@ describe('browserManager grab operations', () => {
     it('injects overlay when enabling grab mode', async () => {
       const result = await browserManager.setGrabMode('tab-1', true, guest)
       expect(result).toBe(true)
-      expect(guestExecuteJavaScriptMock).toHaveBeenCalledTimes(1)
-      expect(guestExecuteJavaScriptMock.mock.calls[0][0]).toContain('__orca-grab-host')
+      expect(guestExecuteJavaScriptInIsolatedWorldMock).toHaveBeenCalledTimes(1)
+      expect(guestExecuteJavaScriptInIsolatedWorldMock).toHaveBeenCalledWith(
+        BROWSER_GRAB_WORLD_ID,
+        [{ code: expect.stringContaining('__orca-grab-host') }],
+        false
+      )
     })
 
     it('cancels active grab op when disabling', async () => {
       // Start a grab op first
-      guestExecuteJavaScriptMock.mockImplementation(() => new Promise(() => {}))
+      guestExecuteJavaScriptInIsolatedWorldMock.mockImplementation(() => new Promise(() => {}))
       const selectionPromise = browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
 
       // Disable grab mode
@@ -196,7 +201,7 @@ describe('browserManager grab operations', () => {
     })
 
     it('returns false if injection fails', async () => {
-      guestExecuteJavaScriptMock.mockRejectedValue(new Error('Injection failed'))
+      guestExecuteJavaScriptInIsolatedWorldMock.mockRejectedValue(new Error('Injection failed'))
       const result = await browserManager.setGrabMode('tab-1', true, guest)
       expect(result).toBe(false)
     })
@@ -256,7 +261,7 @@ describe('browserManager grab operations', () => {
     })
 
     it('forwards bare s from the guest while a grab op is active', async () => {
-      guestExecuteJavaScriptMock.mockImplementation(() => new Promise(() => {}))
+      guestExecuteJavaScriptInIsolatedWorldMock.mockImplementation(() => new Promise(() => {}))
       void browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
 
       const handler = guestOnMock.mock.calls.find(
@@ -318,7 +323,7 @@ describe('browserManager grab operations', () => {
     })
 
     it('returns true when a grab is active', () => {
-      guestExecuteJavaScriptMock.mockImplementation(() => new Promise(() => {}))
+      guestExecuteJavaScriptInIsolatedWorldMock.mockImplementation(() => new Promise(() => {}))
       void browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
       expect(browserManager.hasActiveGrabOp('tab-1')).toBe(true)
     })
@@ -376,7 +381,7 @@ describe('browserManager grab operations', () => {
       }
 
       // The awaitClick script returns a Promise; simulate it resolving
-      guestExecuteJavaScriptMock.mockResolvedValueOnce(mockPayload)
+      guestExecuteJavaScriptInIsolatedWorldMock.mockResolvedValueOnce(mockPayload)
 
       const result = await browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
       expect(result.kind).toBe('selected')
@@ -387,35 +392,35 @@ describe('browserManager grab operations', () => {
     })
 
     it('resolves with cancelled when guest returns null', async () => {
-      guestExecuteJavaScriptMock.mockResolvedValueOnce(null)
+      guestExecuteJavaScriptInIsolatedWorldMock.mockResolvedValueOnce(null)
 
       const result = await browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
       expect(result.kind).toBe('cancelled')
     })
 
     it('resolves with cancelled when guest returns teardown cancellation marker', async () => {
-      guestExecuteJavaScriptMock.mockResolvedValueOnce({ __orcaCancelled: true })
+      guestExecuteJavaScriptInIsolatedWorldMock.mockResolvedValueOnce({ __orcaCancelled: true })
 
       const result = await browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
       expect(result).toEqual({ opId: 'op-1', kind: 'cancelled', reason: 'user' })
     })
 
     it('resolves with cancelled when guest returns a serialized cancelled error', async () => {
-      guestExecuteJavaScriptMock.mockResolvedValueOnce({ message: 'cancelled' })
+      guestExecuteJavaScriptInIsolatedWorldMock.mockResolvedValueOnce({ message: 'cancelled' })
 
       const result = await browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
       expect(result).toEqual({ opId: 'op-1', kind: 'cancelled', reason: 'user' })
     })
 
     it('resolves with cancelled when executeJavaScript rejects a serialized cancelled error', async () => {
-      guestExecuteJavaScriptMock.mockRejectedValueOnce({ message: 'cancelled' })
+      guestExecuteJavaScriptInIsolatedWorldMock.mockRejectedValueOnce({ message: 'cancelled' })
 
       const result = await browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
       expect(result).toEqual({ opId: 'op-1', kind: 'cancelled', reason: 'user' })
     })
 
     it('does not treat a valid payload message field as cancellation', async () => {
-      guestExecuteJavaScriptMock.mockResolvedValueOnce({
+      guestExecuteJavaScriptInIsolatedWorldMock.mockResolvedValueOnce({
         ...makeValidGrabPayload(),
         message: 'cancelled'
       })
@@ -428,7 +433,7 @@ describe('browserManager grab operations', () => {
     })
 
     it('resolves with error when executeJavaScript throws', async () => {
-      guestExecuteJavaScriptMock.mockRejectedValueOnce(new Error('Script failed'))
+      guestExecuteJavaScriptInIsolatedWorldMock.mockRejectedValueOnce(new Error('Script failed'))
 
       const result = await browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
       expect(result.kind).toBe('error')
@@ -439,7 +444,7 @@ describe('browserManager grab operations', () => {
 
     it('resolves with error when guest returns structurally invalid payload', async () => {
       // Missing required 'target' field
-      guestExecuteJavaScriptMock.mockResolvedValueOnce({ page: { title: 'test' } })
+      guestExecuteJavaScriptInIsolatedWorldMock.mockResolvedValueOnce({ page: { title: 'test' } })
 
       const result = await browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
       expect(result.kind).toBe('error')
@@ -504,7 +509,7 @@ describe('browserManager grab operations', () => {
         screenshot: null
       }
 
-      guestExecuteJavaScriptMock.mockResolvedValueOnce(mockPayload)
+      guestExecuteJavaScriptInIsolatedWorldMock.mockResolvedValueOnce(mockPayload)
       const result = await browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
       expect(result.kind).toBe('selected')
       if (result.kind === 'selected') {
@@ -573,7 +578,7 @@ describe('browserManager grab operations', () => {
         screenshot: null
       }
 
-      guestExecuteJavaScriptMock.mockResolvedValueOnce(mockPayload)
+      guestExecuteJavaScriptInIsolatedWorldMock.mockResolvedValueOnce(mockPayload)
       const result = await browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
       expect(result.kind).toBe('selected')
       if (result.kind === 'selected') {
@@ -583,12 +588,12 @@ describe('browserManager grab operations', () => {
     })
 
     it('cancels previous op when starting a new one on same tab', async () => {
-      guestExecuteJavaScriptMock.mockImplementation(() => new Promise(() => {}))
+      guestExecuteJavaScriptInIsolatedWorldMock.mockImplementation(() => new Promise(() => {}))
 
       const promise1 = browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
 
       // Start a second grab op on same tab
-      guestExecuteJavaScriptMock.mockImplementation(() => new Promise(() => {}))
+      guestExecuteJavaScriptInIsolatedWorldMock.mockImplementation(() => new Promise(() => {}))
       void browserManager.awaitGrabSelection('tab-1', 'op-2', guest)
 
       const result1 = await promise1
@@ -599,31 +604,31 @@ describe('browserManager grab operations', () => {
     it('replacement op skips teardown injection to preserve overlay', async () => {
       // Why: when replacing an op, the old op's cleanup must NOT inject the
       // teardown script because the new op reuses the already-armed overlay.
-      guestExecuteJavaScriptMock.mockImplementation(() => new Promise(() => {}))
+      guestExecuteJavaScriptInIsolatedWorldMock.mockImplementation(() => new Promise(() => {}))
 
       void browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
 
       // Record call count before replacement
-      const callCountBefore = guestExecuteJavaScriptMock.mock.calls.length
+      const callCountBefore = guestExecuteJavaScriptInIsolatedWorldMock.mock.calls.length
 
       // Replace with a new op
-      guestExecuteJavaScriptMock.mockImplementation(() => new Promise(() => {}))
+      guestExecuteJavaScriptInIsolatedWorldMock.mockImplementation(() => new Promise(() => {}))
       void browserManager.awaitGrabSelection('tab-1', 'op-2', guest)
 
       // The only new executeJavaScript call should be the awaitClick for op-2.
       // No teardown should have been injected for op-1's cleanup.
       // Why: distinguish teardown from awaitClick — both contain 'cancelAwait',
       // but only the teardown script contains 'if (!grab) return true;'.
-      const newCalls = guestExecuteJavaScriptMock.mock.calls.slice(callCountBefore)
-      const teardownCalls = newCalls.filter(([script]) =>
-        (script as string).includes('if (!grab) return true;')
+      const newCalls = guestExecuteJavaScriptInIsolatedWorldMock.mock.calls.slice(callCountBefore)
+      const teardownCalls = newCalls.filter(([, scripts]) =>
+        (scripts as { code: string }[])[0]?.code.includes('if (!grab) return true;')
       )
       expect(teardownCalls).toHaveLength(0)
     })
 
     it('times out if the guest never settles the armed selection', async () => {
       vi.useFakeTimers()
-      guestExecuteJavaScriptMock.mockImplementation(() => new Promise(() => {}))
+      guestExecuteJavaScriptInIsolatedWorldMock.mockImplementation(() => new Promise(() => {}))
 
       const resultPromise = browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
       await vi.advanceTimersByTimeAsync(120_000)
@@ -636,7 +641,7 @@ describe('browserManager grab operations', () => {
 
     it('ignores a late guest selection after the op was already cancelled', async () => {
       let resolveGuestSelection!: (value: unknown) => void
-      guestExecuteJavaScriptMock.mockImplementation(
+      guestExecuteJavaScriptInIsolatedWorldMock.mockImplementation(
         () =>
           new Promise<unknown>((resolve) => {
             resolveGuestSelection = resolve
@@ -703,7 +708,7 @@ describe('browserManager grab operations', () => {
 
   describe('cancelGrabOp', () => {
     it('resolves active grab with cancelled reason', async () => {
-      guestExecuteJavaScriptMock.mockImplementation(() => new Promise(() => {}))
+      guestExecuteJavaScriptInIsolatedWorldMock.mockImplementation(() => new Promise(() => {}))
 
       const promise = browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
       browserManager.cancelGrabOp('tab-1', 'user')
@@ -718,7 +723,7 @@ describe('browserManager grab operations', () => {
     })
 
     it('supports different cancellation reasons', async () => {
-      guestExecuteJavaScriptMock.mockImplementation(() => new Promise(() => {}))
+      guestExecuteJavaScriptInIsolatedWorldMock.mockImplementation(() => new Promise(() => {}))
 
       const promise = browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
       browserManager.cancelGrabOp('tab-1', 'navigation')
@@ -733,7 +738,7 @@ describe('browserManager grab operations', () => {
 
   describe('unregisterGuest cancels grab', () => {
     it('cancels active grab on unregister', async () => {
-      guestExecuteJavaScriptMock.mockImplementation(() => new Promise(() => {}))
+      guestExecuteJavaScriptInIsolatedWorldMock.mockImplementation(() => new Promise(() => {}))
 
       const promise = browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
       browserManager.unregisterGuest('tab-1')
@@ -744,7 +749,7 @@ describe('browserManager grab operations', () => {
 
     it('cancels active grab when the same tab is re-registered to a new guest', async () => {
       const replacementGuest = makeGuest(202)
-      guestExecuteJavaScriptMock.mockImplementation(() => new Promise(() => {}))
+      guestExecuteJavaScriptInIsolatedWorldMock.mockImplementation(() => new Promise(() => {}))
 
       const promise = browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
       webContentsFromIdMock.mockImplementation((id: number) => {
@@ -776,7 +781,7 @@ describe('browserManager grab operations', () => {
 
   describe('navigation auto-cancel', () => {
     it('cancels grab when guest navigates in main frame', async () => {
-      guestExecuteJavaScriptMock.mockImplementation(() => new Promise(() => {}))
+      guestExecuteJavaScriptInIsolatedWorldMock.mockImplementation(() => new Promise(() => {}))
 
       const promise = browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
 
@@ -793,7 +798,7 @@ describe('browserManager grab operations', () => {
     })
 
     it('does not cancel grab on subframe navigation', async () => {
-      guestExecuteJavaScriptMock.mockImplementation(() => new Promise(() => {}))
+      guestExecuteJavaScriptInIsolatedWorldMock.mockImplementation(() => new Promise(() => {}))
 
       void browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
 
@@ -812,7 +817,7 @@ describe('browserManager grab operations', () => {
 
   describe('destruction auto-cancel', () => {
     it('cancels grab when guest is destroyed', async () => {
-      guestExecuteJavaScriptMock.mockImplementation(() => new Promise(() => {}))
+      guestExecuteJavaScriptInIsolatedWorldMock.mockImplementation(() => new Promise(() => {}))
 
       const promise = browserManager.awaitGrabSelection('tab-1', 'op-1', guest)
 
@@ -856,15 +861,19 @@ describe('browserManager grab operations', () => {
         width: 100,
         height: 50
       })
-      expect(guestExecuteJavaScriptMock).toHaveBeenNthCalledWith(
+      expect(guestExecuteJavaScriptInIsolatedWorldMock).toHaveBeenNthCalledWith(
         1,
-        expect.stringContaining('__orcaGrab')
+        BROWSER_GRAB_WORLD_ID,
+        [{ code: expect.stringContaining('__orcaGrab') }],
+        false
       )
-      expect(guestExecuteJavaScriptMock).toHaveBeenNthCalledWith(
+      expect(guestExecuteJavaScriptInIsolatedWorldMock).toHaveBeenNthCalledWith(
         2,
-        expect.stringContaining('__orcaGrab')
+        BROWSER_GRAB_WORLD_ID,
+        [{ code: expect.stringContaining('__orcaGrab') }],
+        false
       )
-      expect(guestExecuteJavaScriptMock).toHaveBeenNthCalledWith(3, 'window.innerWidth')
+      expect(guestExecuteJavaScriptMock).toHaveBeenCalledWith('window.innerWidth')
     })
 
     it('omits screenshots that exceed the byte budget', async () => {
@@ -892,7 +901,7 @@ describe('browserManager grab operations', () => {
 
   describe('extractHoverPayload', () => {
     it('returns a clamped payload when the guest reports a hovered element', async () => {
-      guestExecuteJavaScriptMock.mockResolvedValueOnce({
+      guestExecuteJavaScriptInIsolatedWorldMock.mockResolvedValueOnce({
         page: {
           sanitizedUrl: 'https://example.com/path?token=secret#hash',
           title: 'Hover target',
@@ -954,7 +963,9 @@ describe('browserManager grab operations', () => {
     })
 
     it('returns null for structurally invalid guest payloads', async () => {
-      guestExecuteJavaScriptMock.mockResolvedValueOnce({ page: { title: 'missing-target' } })
+      guestExecuteJavaScriptInIsolatedWorldMock.mockResolvedValueOnce({
+        page: { title: 'missing-target' }
+      })
 
       const payload = await browserManager.extractHoverPayload('tab-1', guest)
 
