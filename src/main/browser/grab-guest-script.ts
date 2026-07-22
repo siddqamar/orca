@@ -3,6 +3,19 @@
 // Why a string builder not a bundle: guests have no preload/Node; injected code must be plain JS in the page's own world.
 
 type GuestScriptAction = 'arm' | 'awaitClick' | 'finalize' | 'extractHover' | 'teardown'
+type GuestReactMetadataBridgeAction = 'install' | 'teardown'
+
+const REACT_METADATA_REQUEST_EVENT = '__orcaGrabReactMetadataRequest'
+const REACT_METADATA_RESULT_ATTRIBUTE = 'data-orca-grab-react-metadata'
+const REACT_METADATA_BRIDGE_KEY = '__orcaGrabReactMetadataBridge'
+
+export function buildGuestReactMetadataBridgeScript(
+  action: GuestReactMetadataBridgeAction
+): string {
+  return action === 'install'
+    ? INSTALL_REACT_METADATA_BRIDGE_SCRIPT
+    : TEARDOWN_REACT_METADATA_BRIDGE_SCRIPT
+}
 
 /**
  * Build a self-contained JS script for the given grab lifecycle action.
@@ -27,6 +40,145 @@ export function buildGuestOverlayScript(action: GuestScriptAction): string {
       return TEARDOWN_SCRIPT
   }
 }
+
+// Why: isolated-world DOM wrappers cannot see React's page-world fiber expandos.
+// A synchronous event bridge keeps metadata extraction page-local without
+// returning a page-world Promise to Electron.
+const INSTALL_REACT_METADATA_BRIDGE_SCRIPT = `(function() {
+  'use strict';
+  var BRIDGE_KEY = ${JSON.stringify(REACT_METADATA_BRIDGE_KEY)};
+  var REQUEST_EVENT = ${JSON.stringify(REACT_METADATA_REQUEST_EVENT)};
+  var RESULT_ATTRIBUTE = ${JSON.stringify(REACT_METADATA_RESULT_ATTRIBUTE)};
+  if (window[BRIDGE_KEY]) return true;
+
+  var BUDGET = { sourceFileMaxLength: 500, reactComponentsMaxLength: 500 };
+  var SECRET_PATTERNS = [
+    'access_token', 'auth_token', 'api_key', 'apikey', 'client_secret',
+    'oauth_state', 'x-amz-', 'session_id', 'sessionid', 'csrf',
+    'secret', 'password', 'passwd'
+  ];
+
+  function clampStr(s, max) {
+    if (!s || typeof s !== 'string') return '';
+    if (s.length <= max) return s;
+    return s.slice(0, max) + ' (truncated)';
+  }
+
+  function containsSecret(value) {
+    if (!value) return false;
+    var lower = value.toLowerCase();
+    for (var i = 0; i < SECRET_PATTERNS.length; i++) {
+      if (lower.indexOf(SECRET_PATTERNS[i]) !== -1) return true;
+    }
+    return false;
+  }
+
+  function getFiberFromElement(el) {
+    var keys = Object.keys(el);
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i].indexOf('__reactFiber$') === 0 || keys[i].indexOf('__reactInternalInstance$') === 0) {
+        try {
+          return el[keys[i]] || null;
+        } catch (e) {
+          return null;
+        }
+      }
+    }
+    return null;
+  }
+
+  function getComponentNameFromFiber(fiber) {
+    if (!fiber) return null;
+    var type = fiber.type || fiber.elementType;
+    if (!type || typeof type === 'string') return null;
+    if (type.displayName || type.name) return type.displayName || type.name;
+    if (type.render && (type.render.displayName || type.render.name)) {
+      return type.render.displayName || type.render.name;
+    }
+    if (type.type && (type.type.displayName || type.type.name)) {
+      return type.type.displayName || type.type.name;
+    }
+    return null;
+  }
+
+  function shouldSkipReactName(name) {
+    if (!name || name.length <= 2) return true;
+    return /^(Fragment|Root|Routes|Route|Outlet|Provider|Consumer|Profiler|Suspense)$/.test(name) ||
+      /(?:Boundary|BoundaryHandler|Router|Provider|Consumer|Context|Wrapper)$/.test(name) ||
+      /^(Inner|Outer|Client|Server|RSC|Dev|React|Hot)/.test(name);
+  }
+
+  function cleanSourcePath(path) {
+    if (!path) return '';
+    return String(path)
+      .replace(/[?#].*$/, '')
+      .replace(/^turbopack:\\/\\/\\/\\[project\\]\\//, '')
+      .replace(/^webpack-internal:\\/\\/\\/\\.\\//, '')
+      .replace(/^webpack-internal:\\/\\/\\//, '')
+      .replace(/^webpack:\\/\\/\\/\\.\\//, '')
+      .replace(/^webpack:\\/\\/\\//, '')
+      .replace(/^turbopack:\\/\\/\\//, '')
+      .replace(/^https?:\\/\\/[^/]+\\//, '')
+      .replace(/^file:\\/\\/\\//, '/')
+      .replace(/^\\([^)]+\\)\\/\\.\\//, '')
+      .replace(/^\\.\\//, '');
+  }
+
+  function getReactMetadata(el) {
+    try {
+      var fiber = getFiberFromElement(el);
+      var components = [];
+      var sourceFile = null;
+      var depth = 0;
+      while (fiber && depth < 35) {
+        var name = getComponentNameFromFiber(fiber);
+        if (name && !shouldSkipReactName(name) && components.indexOf(name) === -1 && components.length < 6) {
+          components.push(name);
+        }
+        var source = fiber._debugSource || (fiber._debugOwner && fiber._debugOwner._debugSource);
+        if (!sourceFile && source && source.fileName && source.lineNumber) {
+          sourceFile = cleanSourcePath(source.fileName) + ':' + source.lineNumber +
+            (source.columnNumber !== undefined ? ':' + source.columnNumber : '');
+          if (containsSecret(sourceFile)) sourceFile = null;
+        }
+        fiber = fiber.return;
+        depth++;
+      }
+      return {
+        reactComponents: components.length > 0
+          ? clampStr(components.slice().reverse().map(function(c) { return '<' + c + '>'; }).join(' '), BUDGET.reactComponentsMaxLength)
+          : null,
+        sourceFile: sourceFile ? clampStr(sourceFile, BUDGET.sourceFileMaxLength) : null
+      };
+    } catch (e) {
+      return { reactComponents: null, sourceFile: null };
+    }
+  }
+
+  function onMetadataRequest(event) {
+    var el = event.target;
+    if (!el || el.nodeType !== 1) return;
+    try {
+      el.setAttribute(RESULT_ATTRIBUTE, JSON.stringify(getReactMetadata(el)));
+    } catch (e) {}
+  }
+
+  document.addEventListener(REQUEST_EVENT, onMetadataRequest, true);
+  window[BRIDGE_KEY] = {
+    cleanup: function() {
+      document.removeEventListener(REQUEST_EVENT, onMetadataRequest, true);
+      try { delete window[BRIDGE_KEY]; } catch (e) { window[BRIDGE_KEY] = null; }
+    }
+  };
+  return true;
+})()`
+
+const TEARDOWN_REACT_METADATA_BRIDGE_SCRIPT = `(function() {
+  'use strict';
+  var bridge = window[${JSON.stringify(REACT_METADATA_BRIDGE_KEY)}];
+  if (bridge && typeof bridge.cleanup === 'function') bridge.cleanup();
+  return true;
+})()`
 
 // arm: install the overlay + hover tracking; state lives on window.__orcaGrab so finalize/teardown can reach it.
 const ARM_SCRIPT = `(function() {
@@ -594,6 +746,21 @@ const ARM_SCRIPT = `(function() {
     return null;
   }
 
+  function requestPageWorldReactMetadata(el) {
+    try {
+      el.removeAttribute(${JSON.stringify(REACT_METADATA_RESULT_ATTRIBUTE)});
+      el.dispatchEvent(new CustomEvent(${JSON.stringify(REACT_METADATA_REQUEST_EVENT)}, { bubbles: true }));
+      var raw = el.getAttribute(${JSON.stringify(REACT_METADATA_RESULT_ATTRIBUTE)});
+      el.removeAttribute(${JSON.stringify(REACT_METADATA_RESULT_ATTRIBUTE)});
+      if (!raw) return null;
+      var metadata = JSON.parse(raw);
+      return metadata && typeof metadata === 'object' ? metadata : null;
+    } catch (e) {
+      try { el.removeAttribute(${JSON.stringify(REACT_METADATA_RESULT_ATTRIBUTE)}); } catch (ignored) {}
+      return null;
+    }
+  }
+
   function getComponentNameFromFiber(fiber) {
     if (!fiber) return null;
     var type = fiber.type || fiber.elementType;
@@ -632,6 +799,8 @@ const ARM_SCRIPT = `(function() {
   }
 
   function getReactMetadata(el) {
+    var pageMetadata = requestPageWorldReactMetadata(el);
+    if (pageMetadata) return pageMetadata;
     try {
       var fiber = getFiberFromElement(el);
       var components = [];

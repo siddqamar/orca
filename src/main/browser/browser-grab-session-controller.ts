@@ -1,7 +1,10 @@
 import type { BrowserGrabCancelReason, BrowserGrabResult } from '../../shared/browser-grab-types'
-import { buildGuestOverlayScript } from './grab-guest-script'
+import { buildGuestOverlayScript, buildGuestReactMetadataBridgeScript } from './grab-guest-script'
 import { clampGrabPayload } from './browser-grab-payload'
-import { executeBrowserGrabScript } from './browser-grab-script-executor'
+import {
+  executeBrowserGrabPageScript,
+  executeBrowserGrabScript
+} from './browser-grab-script-executor'
 
 /** Tracks the lifecycle of a single grab operation on one browser tab. */
 type ActiveGrabOp = {
@@ -216,6 +219,10 @@ export class BrowserGrabSessionController {
         try {
           if (!guest.isDestroyed()) {
             void executeBrowserGrabScript(guest, buildGuestOverlayScript('teardown'))
+            void executeBrowserGrabPageScript(
+              guest,
+              buildGuestReactMetadataBridgeScript('teardown')
+            )
           }
         } catch {
           // Best-effort overlay removal

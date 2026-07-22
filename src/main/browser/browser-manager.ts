@@ -23,9 +23,12 @@ import type {
   BrowserGrabResult,
   BrowserGrabScreenshot
 } from '../../shared/browser-grab-types'
-import { buildGuestOverlayScript } from './grab-guest-script'
+import { buildGuestOverlayScript, buildGuestReactMetadataBridgeScript } from './grab-guest-script'
 import { clampGrabPayload } from './browser-grab-payload'
-import { executeBrowserGrabScript } from './browser-grab-script-executor'
+import {
+  executeBrowserGrabPageScript,
+  executeBrowserGrabScript
+} from './browser-grab-script-executor'
 import { captureSelectionScreenshot as captureGrabSelectionScreenshot } from './browser-grab-screenshot'
 import { BrowserGrabSessionController } from './browser-grab-session-controller'
 import { browserDownloadDestinationReservations } from './browser-download-destination'
@@ -1608,11 +1611,19 @@ export class BrowserManager {
     guest: Electron.WebContents
   ): Promise<boolean> {
     if (!enabled) {
+      const hadActiveGrabOp = this.hasActiveGrabOp(browserTabId)
       this.cancelGrabOp(browserTabId, 'user')
+      if (!hadActiveGrabOp && !guest.isDestroyed()) {
+        void executeBrowserGrabPageScript(
+          guest,
+          buildGuestReactMetadataBridgeScript('teardown')
+        ).catch(() => {})
+      }
       return true
     }
     // Why: inject the overlay runtime eagerly on arm so the hover UI appears instantly; re-injection is idempotent/safe.
     try {
+      await executeBrowserGrabPageScript(guest, buildGuestReactMetadataBridgeScript('install'))
       await executeBrowserGrabScript(guest, buildGuestOverlayScript('arm'))
       return true
     } catch {

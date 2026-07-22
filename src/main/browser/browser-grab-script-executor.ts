@@ -7,3 +7,10 @@ export function executeBrowserGrabScript(
 ): Promise<unknown> {
   return guest.executeJavaScriptInIsolatedWorld(BROWSER_GRAB_WORLD_ID, [{ code: script }], false)
 }
+
+export function executeBrowserGrabPageScript(
+  guest: Electron.WebContents,
+  script: string
+): Promise<unknown> {
+  return guest.executeJavaScript(script)
+}

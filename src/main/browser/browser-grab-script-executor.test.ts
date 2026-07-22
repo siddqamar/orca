@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { BROWSER_GRAB_WORLD_ID, executeBrowserGrabScript } from './browser-grab-script-executor'
+import {
+  BROWSER_GRAB_WORLD_ID,
+  executeBrowserGrabPageScript,
+  executeBrowserGrabScript
+} from './browser-grab-script-executor'
 
 describe('executeBrowserGrabScript', () => {
   it('runs grab scripts in the dedicated isolated world', async () => {
@@ -16,5 +20,16 @@ describe('executeBrowserGrabScript', () => {
       [{ code: 'new Promise((resolve) => resolve({ page: {}, target: {} }))' }],
       false
     )
+  })
+})
+
+describe('executeBrowserGrabPageScript', () => {
+  it('executes the script in the guest page world', async () => {
+    const executeJavaScript = vi.fn().mockResolvedValue(true)
+    const guest = { executeJavaScript } as unknown as Electron.WebContents
+
+    await executeBrowserGrabPageScript(guest, 'true')
+
+    expect(executeJavaScript).toHaveBeenCalledWith('true')
   })
 })
